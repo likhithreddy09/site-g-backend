@@ -1,0 +1,5 @@
+[start]
+cmd = "python run.py"
+
+[phases.setup]
+nixPkgs = ["python311", "openssl"]
