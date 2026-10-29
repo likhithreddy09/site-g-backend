@@ -1,13 +1,16 @@
 import logging
+import mimetypes
 import os
+from io import BytesIO
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, request, send_file
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
 from .config import Config
 from .db import init_db
 from .security import verify_artifact
+from .services import artifacts
 from .utils import ApiError
 
 
@@ -15,7 +18,9 @@ def create_app(start_worker: bool | None = None) -> Flask:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
-    CORS(app, resources={r"/api/*": {"origins": Config.CORS_ORIGINS}}, supports_credentials=False,
+    CORS(app, resources={r"/api/*": {"origins": Config.CORS_ORIGINS},
+                         r"/artifacts/*": {"origins": Config.CORS_ORIGINS}},
+         supports_credentials=False,
          allow_headers=["Authorization", "Content-Type", "X-Workspace-Id"])
     init_db()
 
@@ -40,7 +45,11 @@ def create_app(start_worker: bool | None = None) -> Flask:
     def artifact(rel):
         if ".." in rel or not verify_artifact(rel, request.args.get("exp"), request.args.get("sig")):
             abort(403)
-        return send_from_directory(os.path.join(Config.STORAGE_DIR, "artifacts"), rel, max_age=3600)
+        data = artifacts.get_bytes(rel)
+        if data is None:
+            abort(404)
+        ctype = mimetypes.guess_type(rel)[0] or "application/octet-stream"
+        return send_file(BytesIO(data), mimetype=ctype, max_age=3600, download_name=os.path.basename(rel))
 
     @app.get("/healthz")
     def healthz():

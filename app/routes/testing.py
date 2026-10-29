@@ -1,15 +1,13 @@
 import os
-import shutil
 from datetime import timedelta
 
 from flask import Blueprint, g, jsonify, request
 
 from ..audit import audit
-from ..config import Config
 from ..db import get_db
 from ..plans import limits, quota_left, require_capacity
 from ..security import normalize_url, require, sign_artifact, validate_target
-from ..services import browser, incidents, page_preview
+from ..services import artifacts, browser, incidents, page_preview
 from ..utils import ApiError, clamp_int, maybe_oid, now, oid, ser
 from . import body
 
@@ -186,11 +184,14 @@ def approve_baseline(cid):
         src = c.get("last_screenshot")
     if not src:
         raise ApiError("No screenshot available yet — run the check first", 409)
-    base_dir = os.path.join(Config.STORAGE_DIR, "artifacts")
-    dst_name = f"baseline-{int(now().timestamp())}-{os.path.basename(src)}"
-    dst = os.path.join(base_dir, str(g.ws_id), dst_name)
-    shutil.copy(os.path.join(base_dir, src), dst)
-    db.page_checks.update_one({"_id": c["_id"]}, {"$set": {"baseline": {"path": os.path.relpath(dst, base_dir), "at": now(),
+    if not artifacts.exists(src):
+        raise ApiError("Screenshot file is missing — re-run the check to capture a new one", 409)
+    dst_rel = f"{g.ws_id}/baseline-{int(now().timestamp())}-{os.path.basename(src)}"
+    try:
+        artifacts.copy(src, dst_rel)
+    except FileNotFoundError as e:
+        raise ApiError("Screenshot file is missing — re-run the check to capture a new one", 409) from e
+    db.page_checks.update_one({"_id": c["_id"]}, {"$set": {"baseline": {"path": dst_rel, "at": now(),
                                                                          "approved_by": g.user["email"]}, "status": "passing"}})
     db.visual_changes.update_many({"page_check_id": c["_id"], "status": "pending_review"}, {"$set": {"status": "superseded"}})
     audit("page_check.baseline_approved", "page_check", c["_id"])

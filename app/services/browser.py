@@ -13,7 +13,7 @@ from ..db import get_db
 from ..plans import add_usage, quota_left
 from ..security import check_host_allowed, redact, strip_query, validate_target
 from ..utils import now
-from . import incidents, notify
+from . import artifacts, incidents, notify
 from .checks import http_request
 
 VIEWPORT = {"width": 1366, "height": 900}
@@ -45,6 +45,13 @@ def _rel(path: str) -> str:
 def _new_artifact(ws_id, prefix: str) -> str:
     name = f"{prefix}-{int(time.time() * 1000)}-{random.randint(1000, 9999)}.png"
     return os.path.join(_artifact_dir(ws_id), name)
+
+
+def _persist(path: str) -> str:
+    """Upload a local screenshot to GridFS and return its relative artifact path."""
+    rel = _rel(path)
+    artifacts.put_file(rel, src_path=path)
+    return rel
 
 
 class _Guard:
@@ -128,6 +135,7 @@ def _diff_images(base_path: str, cur_path: str, ignore_regions: list[dict], ws_i
     overlay.paste(Image.new("RGB", cur.size, (155, 27, 103)), mask=diff)
     out = _new_artifact(ws_id, "diff")
     overlay.save(out, optimize=True)
+    artifacts.put_file(_rel(out), src_path=out)
     return pct, out
 
 
@@ -177,6 +185,7 @@ def run_page_check(check_id) -> dict | None:
                     page.wait_for_timeout(300)
                     shot_path = _new_artifact(chk["workspace_id"], "page")
                     page.screenshot(path=shot_path, full_page=False)
+                    artifacts.put_file(_rel(shot_path), src_path=shot_path)
                 links = []
                 if chk.get("check_links"):
                     links = page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
@@ -208,14 +217,24 @@ def run_page_check(check_id) -> dict | None:
         if not baseline:
             bpath = _new_artifact(chk["workspace_id"], "baseline")
             shutil.copy(shot_path, bpath)
+            artifacts.put_file(_rel(bpath), src_path=bpath)
             db.page_checks.update_one({"_id": chk["_id"]}, {"$set": {"baseline": {"path": _rel(bpath), "at": t}}})
             result["visual"] = {"screenshot": _rel(shot_path), "baseline": _rel(bpath), "diff_pct": 0, "changed": False, "new_baseline": True}
         else:
-            base_abs = os.path.join(Config.STORAGE_DIR, "artifacts", baseline["path"])
-            pct, diff_path = _diff_images(base_abs, shot_path, chk.get("ignore_regions") or [], chk["workspace_id"])
-            changed = pct > float(chk.get("threshold_pct", 1.0))
-            result["visual"] = {"screenshot": _rel(shot_path), "baseline": baseline["path"], "diff": _rel(diff_path),
-                                "diff_pct": pct, "changed": changed}
+            try:
+                base_abs = artifacts.ensure_local(baseline["path"])
+            except FileNotFoundError:
+                bpath = _new_artifact(chk["workspace_id"], "baseline")
+                shutil.copy(shot_path, bpath)
+                artifacts.put_file(_rel(bpath), src_path=bpath)
+                db.page_checks.update_one({"_id": chk["_id"]}, {"$set": {"baseline": {"path": _rel(bpath), "at": t}}})
+                result["visual"] = {"screenshot": _rel(shot_path), "baseline": _rel(bpath), "diff_pct": 0, "changed": False,
+                                    "new_baseline": True}
+            else:
+                pct, diff_path = _diff_images(base_abs, shot_path, chk.get("ignore_regions") or [], chk["workspace_id"])
+                changed = pct > float(chk.get("threshold_pct", 1.0))
+                result["visual"] = {"screenshot": _rel(shot_path), "baseline": baseline["path"], "diff": _rel(diff_path),
+                                    "diff_pct": pct, "changed": changed}
 
     functional_fail = bool(result["error"] or result["missing_texts"] or result["missing_selectors"])
     res_doc = {"workspace_id": chk["workspace_id"], "website_id": chk.get("website_id"), "page_check_id": chk["_id"],
@@ -389,7 +408,7 @@ def _execute_steps(test: dict, ws_id) -> dict:
                     elif action == "screenshot":
                         path = _new_artifact(ws_id, "step")
                         page.screenshot(path=path)
-                        rec["screenshot"] = _rel(path)
+                        rec["screenshot"] = _persist(path)
                     else:
                         raise ValueError(f"Unknown action '{action}'")
                 except Exception as e:  # noqa: BLE001
@@ -406,7 +425,7 @@ def _execute_steps(test: dict, ws_id) -> dict:
                 try:
                     failure_shot = _new_artifact(ws_id, "fail")
                     page.screenshot(path=failure_shot, full_page=False)
-                    rec["screenshot"] = _rel(failure_shot)
+                    rec["screenshot"] = _persist(failure_shot)
                 except Exception:  # noqa: BLE001
                     failure_shot = None
                 break
@@ -414,6 +433,7 @@ def _execute_steps(test: dict, ws_id) -> dict:
             try:
                 final_shot = _new_artifact(ws_id, "final")
                 page.screenshot(path=final_shot)
+                _persist(final_shot)
             except Exception:  # noqa: BLE001
                 final_shot = None
         browser.close()

@@ -17,7 +17,7 @@ from pymongo import ReturnDocument
 from .config import Config
 from .db import get_db
 from .plans import limits
-from .services import browser, checks, incidents, reports
+from .services import artifacts, browser, checks, incidents, reports
 from .utils import now
 
 log = logging.getLogger("siteguard.scheduler")
@@ -152,13 +152,18 @@ def retention() -> None:
         db.test_runs.delete_many({"workspace_id": ws["_id"], "at": {"$lt": cutoff}})
         db.error_events.delete_many({"workspace_id": ws["_id"], "at": {"$lt": cutoff}})
         db.notifications.delete_many({"workspace_id": ws["_id"], "at": {"$lt": cutoff}})
+        protected = {os.path.basename((c.get("baseline") or {}).get("path", "")) for c in db.page_checks.find({"workspace_id": ws["_id"]})}
+        # Durable store (GridFS) + any leftover local cache files
+        artifacts.delete_prefix(f"{ws['_id']}/", keep=protected, older_than_ts=cutoff.timestamp())
         art_dir = os.path.join(Config.STORAGE_DIR, "artifacts", str(ws["_id"]))
         if os.path.isdir(art_dir):
-            protected = {os.path.basename((c.get("baseline") or {}).get("path", "")) for c in db.page_checks.find({"workspace_id": ws["_id"]})}
             for name in os.listdir(art_dir):
                 p = os.path.join(art_dir, name)
-                if name not in protected and os.path.getmtime(p) < cutoff.timestamp():
-                    os.remove(p)
+                if name not in protected and os.path.isfile(p) and os.path.getmtime(p) < cutoff.timestamp():
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
     db.job_log.delete_many({"at": {"$lt": now() - timedelta(days=7)}})
 
 
