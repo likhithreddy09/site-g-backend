@@ -99,14 +99,18 @@ def _method_labels(csv: str) -> list[dict]:
 @require("owner")
 def checkout():
     if not cashfree.enabled():
-        raise ApiError("Payments are not configured on this server", 503, "billing_unavailable")
+        raise ApiError(
+            "Payments are not configured on this server. Set Cashfree keys on Railway.",
+            503,
+            "billing_unavailable",
+        )
     data = body()
     plan = data.get("plan")
     if plan not in PAID_PLANS:
-        raise ApiError("Choose a paid plan to checkout", 422)
+        raise ApiError("Choose a paid plan to checkout (Starter, Agency, or Agency Pro).", 422, "invalid_plan")
     amount = PLANS[plan]["price_inr"]
     if not amount:
-        raise ApiError("Invalid plan amount", 422)
+        raise ApiError("This plan has no price configured.", 422, "invalid_plan_amount")
 
     db = get_db()
     sites = db.websites.count_documents({"workspace_id": g.ws_id})

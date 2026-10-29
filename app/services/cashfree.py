@@ -126,22 +126,48 @@ def create_order(
             code = body.get("code") or body.get("type") or ""
         except Exception:  # noqa: BLE001
             detail, code = r.text, ""
-        msg = str(detail)
-        # Common go-live blockers surfaced clearly in the UI
+        msg = str(detail).strip() or f"HTTP {r.status_code}"
+        cf_code = str(code or "").strip() or f"http_{r.status_code}"
         low = msg.lower()
+        # Map common Cashfree failures to clear UI codes + messages
         if "transaction" in low and "not enabled" in low:
-            msg = (
+            raise ApiError(
                 "Cashfree production transactions are not enabled yet. "
-                "Complete KYC, enable Payment Gateway, and whitelist your domain "
-                "(Developers → Whitelisting) in the Cashfree dashboard."
+                "Complete KYC / activate Payment Gateway in the Cashfree dashboard, then retry.",
+                502,
+                "cashfree_transactions_disabled",
+                extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
             )
-        elif "whitelist" in low or "domain" in low:
-            msg = (
-                "Domain not whitelisted with Cashfree. "
-                "Add https://watchfront.in in Developers → Whitelisting."
+        if "whitelist" in low or ("domain" in low and ("not" in low or "invalid" in low)):
+            raise ApiError(
+                "Your website domain is not whitelisted with Cashfree. "
+                "Add https://www.watchfront.in in Cashfree → Developers → Whitelisting.",
+                502,
+                "cashfree_domain_not_whitelisted",
+                extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
             )
-        raise ApiError(f"Cashfree: {msg}" + (f" [{code}]" if code else ""), 502, "cashfree_error")
+        if "authentication" in low or "unauthorized" in low or r.status_code in (401, 403):
+            raise ApiError(
+                "Cashfree API keys were rejected. Check CASHFREE_APP_ID / CASHFREE_SECRET_KEY on Railway.",
+                502,
+                "cashfree_auth_failed",
+                extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
+            )
+        if "customer_phone" in low or "phone" in low:
+            raise ApiError(
+                "Cashfree rejected the mobile number. Use a valid 10-digit Indian mobile.",
+                422,
+                "cashfree_invalid_phone",
+                extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
+            )
+        raise ApiError(
+            f"Payment could not be started: {msg}",
+            502,
+            "cashfree_order_failed",
+            extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
+        )
     return r.json()
+
 
 
 def get_order(order_id: str) -> dict[str, Any]:
