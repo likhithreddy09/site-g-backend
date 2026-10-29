@@ -78,6 +78,43 @@ def overview():
         })
     portfolio.sort(key=lambda x: (0 if x.get("status") == "down" else 1 if x.get("status") == "degraded" else 2, x["name"].lower()))
 
+    attention = []
+    for i in open_incidents:
+        attention.append({
+            "kind": "incident", "severity": i.get("severity") or "major", "title": i.get("title"),
+            "href": f"/app/incidents/{i['_id']}", "meta": i.get("website_name"), "at": i.get("last_detected_at") or i.get("started_at"),
+        })
+    for s in sites:
+        if s.get("status") == "down" and not s.get("paused"):
+            attention.append({
+                "kind": "down", "severity": "critical", "title": f"{s['name']} is down",
+                "href": f"/app/websites/{s['_id']}", "meta": s.get("url"), "at": s.get("last_check_at"),
+            })
+    for e in sorted(expiring, key=lambda x: x["days_left"]):
+        if e["days_left"] <= (14 if e["kind"] == "SSL" else 30):
+            attention.append({
+                "kind": "expiry", "severity": "critical" if e["days_left"] < 0 else "major" if e["days_left"] <= 7 else "minor",
+                "title": f"{e['name']} {e['kind'].lower()} {'expired' if e['days_left'] < 0 else f'expires in {e['days_left']}d'}",
+                "href": f"/app/websites/{e['website_id']}?tab=ssl", "meta": e["kind"], "at": e.get("expires_at"),
+            })
+    if tests_failing:
+        attention.append({
+            "kind": "journey", "severity": "major", "title": f"{tests_failing} user journey{'s' if tests_failing != 1 else ''} failing",
+            "href": "/app/tests", "meta": "Browser tests", "at": None,
+        })
+    if err_groups:
+        attention.append({
+            "kind": "errors", "severity": "minor", "title": f"{err_groups} active browser error group{'s' if err_groups != 1 else ''} (24h)",
+            "href": "/app/errors", "meta": "JS / network", "at": None,
+        })
+    if pending_changes:
+        attention.append({
+            "kind": "visual", "severity": "info", "title": f"{pending_changes} visual change{'s' if pending_changes != 1 else ''} awaiting review",
+            "href": "/app/checks", "meta": "Content & visual", "at": None,
+        })
+    sev_rank = {"critical": 0, "major": 1, "minor": 2, "info": 3}
+    attention.sort(key=lambda a: (sev_rank.get(a.get("severity"), 9), a.get("at") is None))
+
     return jsonify(ser({
         "websites": {"total": len(sites), "by_status": status_counts},
         "portfolio": portfolio,
@@ -86,6 +123,7 @@ def overview():
         "avg_response_ms": round(avg[0]["avg"]) if avg and avg[0]["avg"] else None,
         "hourly": [{"t": h["_id"], "avg_ms": round(h["avg"] or 0), "checks": h["n"], "failures": h["fail"]} for h in hourly],
         "open_incidents": open_incidents,
+        "needs_attention": attention[:12],
         "incident_counts": {s: db.incidents.count_documents({**scope, "status": s}) for s in ("open", "investigating")},
         "expiring": sorted(expiring, key=lambda x: x["days_left"]),
         "tests_failing": tests_failing, "error_groups_24h": err_groups, "pending_visual_changes": pending_changes,

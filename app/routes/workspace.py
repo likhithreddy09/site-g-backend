@@ -69,6 +69,19 @@ def update_notifications():
     if data.get("slack_webhook") and not limits(g.ws)["slack"]:
         raise ApiError("Slack/Teams notifications require the Agency plan", 402, "plan_limit")
     esc = data.get("escalation") or {}
+    quiet = data.get("quiet_hours") or {}
+
+    def _hhmm(v: str, default: str) -> str:
+        raw = (v or default).strip()
+        parts = raw.split(":")
+        try:
+            h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return f"{h:02d}:{m:02d}"
+        except (TypeError, ValueError):
+            pass
+        return default
+
     settings = {
         "emails": emails,
         "slack_webhook": (data.get("slack_webhook") or "").strip(),
@@ -78,6 +91,11 @@ def update_notifications():
         "min_severity": data.get("min_severity") if data.get("min_severity") in notify.SEVERITY_RANK else "minor",
         "escalation": {"enabled": bool(esc.get("enabled")), "after_minutes": clamp_int(esc.get("after_minutes"), 5, 1440, 30),
                        "emails": [e.strip().lower() for e in esc.get("emails") or [] if valid_email(e.strip())]},
+        "quiet_hours": {
+            "enabled": bool(quiet.get("enabled")),
+            "start": _hhmm(str(quiet.get("start") or ""), "22:00"),
+            "end": _hhmm(str(quiet.get("end") or ""), "07:00"),
+        },
     }
     get_db().workspaces.update_one({"_id": g.ws_id}, {"$set": {"notifications": settings}})
     audit("notifications.updated", "workspace", g.ws_id)

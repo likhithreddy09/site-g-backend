@@ -111,6 +111,9 @@ def _website_fields(data: dict, ws: dict, existing: dict | None = None) -> dict:
             out[k] = [str(x)[:200] for x in v if str(x).strip()][:20]
     if "notes" in data or not existing:
         out["notes"] = (data.get("notes") or "")[:5000]
+    if "environment" in data or not existing:
+        env = str(data.get("environment") or "production").strip().lower()[:32]
+        out["environment"] = env if env in ("production", "staging", "development", "preview") else "production"
     if "ssl_enabled" in data or not existing:
         out["ssl_enabled"] = bool(data.get("ssl_enabled", True)) and bool(lim["ssl"])
     if "domain_enabled" in data or not existing:
@@ -173,16 +176,13 @@ def list_websites():
     return jsonify(ser(rows))
 
 
-@bp.post("/websites")
-@require("member")
-def create_website():
+def _insert_website(data: dict, *, run_initial: bool = True) -> dict:
     require_capacity(g.ws, "websites", "websites", "websites")
-    data = body()
     fields = _website_fields(data, g.ws)
     t = now()
     doc = {"workspace_id": g.ws_id, "client_id": None, "paused": False, "status": "unknown", "consecutive_failures": 0,
            "created_at": t, "next_check_at": t, "ssl_next_at": t, "domain_next_at": t, "site_key": token("sg_", 12),
-           "ssl_reminder_days": [30, 14, 7, 1], "domain_reminder_days": [60, 30, 14, 7],
+           "ssl_reminder_days": [30, 14, 7, 1], "domain_reminder_days": [60, 30, 14, 7], "environment": "production",
            "rum": {"enabled": True, "sample_rate": 1.0, "capture_api": True, "alert_threshold": 10, "ignore_patterns": [], "release": "", "alert_new": True, "console_errors": False},
            **fields}
     if get_db().websites.find_one({"workspace_id": g.ws_id, "normalized_url": doc["normalized_url"]}):
@@ -192,10 +192,80 @@ def create_website():
     except DuplicateKeyError:
         raise ApiError("This website is already being monitored in this workspace", 409, "duplicate")
     audit("website.created", "website", doc["_id"], {"url": doc["url"]})
-    if data.get("run_initial_check", True):
+    if run_initial:
         checks.run_website_check(doc["_id"])
         get_db().websites.update_one({"_id": doc["_id"]}, {"$set": {"next_check_at": now() + timedelta(seconds=doc["interval_sec"])}})
-    return jsonify(ser(get_db().websites.find_one({"_id": doc["_id"]}))), 201
+    return get_db().websites.find_one({"_id": doc["_id"]})
+
+
+@bp.post("/websites")
+@require("member")
+def create_website():
+    data = body()
+    return jsonify(ser(_insert_website(data, run_initial=bool(data.get("run_initial_check", True))))), 201
+
+
+@bp.post("/websites/bulk")
+@require("member")
+def bulk_create_websites():
+    """Import websites from CSV rows or JSON list. Columns: url, name, client, environment, interval_sec, labels."""
+    data = body()
+    rows = data.get("websites") or data.get("rows") or []
+    csv_text = (data.get("csv") or "").strip()
+    if csv_text and not rows:
+        import csv
+        import io
+        reader = csv.DictReader(io.StringIO(csv_text))
+        rows = list(reader)
+    if not rows:
+        raise ApiError("Provide csv text or a websites array", 422)
+    if len(rows) > 100:
+        raise ApiError("Import at most 100 websites at a time", 422)
+
+    clients_by_name = {c["name"].strip().lower(): c["_id"] for c in get_db().clients.find({"workspace_id": g.ws_id}, {"name": 1})}
+    created, skipped, errors = [], [], []
+    run_checks = bool(data.get("run_initial_check", True))
+    for i, raw in enumerate(rows):
+        try:
+            url = (raw.get("url") or raw.get("URL") or "").strip()
+            if not url:
+                raise ApiError("url is required", 422)
+            client_name = (raw.get("client") or raw.get("client_name") or "").strip()
+            client_id = raw.get("client_id")
+            if client_name and not client_id:
+                client_id = clients_by_name.get(client_name.lower())
+                if not client_id:
+                    cid = get_db().clients.insert_one({
+                        "workspace_id": g.ws_id, "name": client_name[:100], "created_at": now(),
+                        "notes": "", "contact_email": "",
+                    }).inserted_id
+                    clients_by_name[client_name.lower()] = cid
+                    client_id = cid
+            labels = raw.get("labels") or []
+            if isinstance(labels, str):
+                labels = [x.strip() for x in labels.split(",") if x.strip()]
+            payload = {
+                "url": url,
+                "name": (raw.get("name") or "").strip(),
+                "client_id": str(client_id) if client_id else None,
+                "environment": (raw.get("environment") or "production").strip().lower(),
+                "interval_sec": int(raw["interval_sec"]) if str(raw.get("interval_sec") or "").isdigit() else None,
+                "labels": labels,
+            }
+            if payload["interval_sec"] is None:
+                payload.pop("interval_sec")
+            site = _insert_website(payload, run_initial=run_checks)
+            created.append(ser(site))
+        except ApiError as e:
+            msg = e.message
+            if e.code == "duplicate":
+                skipped.append({"row": i + 1, "url": raw.get("url"), "reason": msg})
+            else:
+                errors.append({"row": i + 1, "url": raw.get("url"), "error": msg})
+        except Exception as e:  # noqa: BLE001
+            errors.append({"row": i + 1, "url": raw.get("url"), "error": str(e)})
+    return jsonify({"created": created, "skipped": skipped, "errors": errors,
+                    "counts": {"created": len(created), "skipped": len(skipped), "errors": len(errors)}}), 201
 
 
 @bp.get("/websites/<sid>")

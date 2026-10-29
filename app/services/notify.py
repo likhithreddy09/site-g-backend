@@ -36,7 +36,48 @@ def settings_for(ws: dict) -> dict:
     s = {**DEFAULT_SETTINGS, **(ws.get("notifications") or {})}
     s["events"] = {**DEFAULT_SETTINGS["events"], **(s.get("events") or {})}
     s["escalation"] = {**DEFAULT_SETTINGS["escalation"], **(s.get("escalation") or {})}
+    s["quiet_hours"] = {**DEFAULT_SETTINGS["quiet_hours"], **(s.get("quiet_hours") or {})}
     return s
+
+
+def _in_quiet_hours(s: dict) -> bool:
+    q = s.get("quiet_hours") or {}
+    if not q.get("enabled"):
+        return False
+    try:
+        start_h, start_m = [int(x) for x in str(q.get("start") or "22:00").split(":")[:2]]
+        end_h, end_m = [int(x) for x in str(q.get("end") or "07:00").split(":")[:2]]
+    except (TypeError, ValueError):
+        return False
+    t = now()
+    mins = t.hour * 60 + t.minute
+    start, end = start_h * 60 + start_m, end_h * 60 + end_m
+    if start == end:
+        return False
+    if start < end:
+        return start <= mins < end
+    return mins >= start or mins < end
+
+
+def _slack_blocks(subject: str, body: str, *, severity: str, event: str, link: str | None) -> dict:
+    color = {"critical": "#d64545", "major": "#9b1b67", "minor": "#5b8def", "info": "#6b7280"}.get(severity, "#9b1b67")
+    fields = [
+        {"type": "mrkdwn", "text": f"*Severity*\n{severity}"},
+        {"type": "mrkdwn", "text": f"*Event*\n{event.replace('_', ' ')}"},
+    ]
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": subject[:140], "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": body[:2800]}},
+        {"type": "section", "fields": fields},
+    ]
+    if link:
+        blocks.append({"type": "actions", "elements": [
+            {"type": "button", "text": {"type": "plain_text", "text": "Open in SiteGuard"}, "url": link, "style": "primary"}
+        ]})
+    return {
+        "text": f"{subject}\n{body}",
+        "attachments": [{"color": color, "blocks": blocks}],
+    }
 
 
 def _record(ws_id, channel, target, subject, status, error=None, incident_id=None, event=None):
@@ -89,6 +130,10 @@ def dispatch(ws: dict, event: str, subject: str, body: str, *, severity: str = "
         return
     if event in ("incident_opened", "incident_reopened") and SEVERITY_RANK.get(severity, 2) < SEVERITY_RANK.get(s["min_severity"], 1):
         return
+    # Quiet hours mute non-critical, non-escalation noise so agencies/startups can sleep.
+    if event != "escalation" and severity != "critical" and _in_quiet_hours(s):
+        _record(ws["_id"], "quiet_hours", "suppressed", subject, "skipped", "quiet hours", incident_id, event)
+        return
     full_body = body + (f"\n\nOpen in SiteGuard: {link}" if link else "")
     emails = extra_emails if extra_emails is not None else s["emails"]
     if not emails:
@@ -99,7 +144,7 @@ def dispatch(ws: dict, event: str, subject: str, body: str, *, severity: str = "
 
     text = f"*{subject}*\n{body}" + (f"\n<{link}|Open in SiteGuard>" if link else "")
     if s.get("slack_webhook") and feature(ws, "slack"):
-        status, err = _post(s["slack_webhook"], {"text": text})
+        status, err = _post(s["slack_webhook"], _slack_blocks(subject, body, severity=severity, event=event, link=link))
         _record(ws["_id"], "slack", "slack webhook", subject, status, err, incident_id, event)
     if s.get("teams_webhook") and feature(ws, "slack"):
         status, err = _post(s["teams_webhook"], {"text": text})
