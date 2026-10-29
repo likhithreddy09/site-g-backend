@@ -99,6 +99,47 @@ def share(rid):
     return jsonify(_out(db.reports.find_one({"_id": doc["_id"]})))
 
 
+@bp.post("/api/reports/<rid>/email")
+@require("member")
+def email_report(rid):
+    """Email this report's share link to clients / stakeholders."""
+    require_feature(g.ws, "reports", "Client reports")
+    db = get_db()
+    doc = db.reports.find_one({"_id": oid(rid), "workspace_id": g.ws_id})
+    if not doc:
+        raise ApiError("Report not found", 404)
+    data = body()
+    recipients = [e.strip().lower() for e in (data.get("recipients") or []) if str(e).strip()]
+    if not recipients or not all(valid_email(e) for e in recipients):
+        raise ApiError("Add at least one valid recipient email", 422)
+    if len(recipients) > 20:
+        raise ApiError("You can email at most 20 recipients at once", 422)
+    note = (data.get("note") or "").strip()[:500]
+
+    # Ensure an active share link exists before emailing.
+    active = not doc.get("revoked") and (not doc.get("share_expires_at") or doc["share_expires_at"] > now())
+    if not active or not doc.get("share_token"):
+        days = clamp_int(data.get("share_days"), 1, 365, 30)
+        upd = {
+            "revoked": False,
+            "share_token": doc.get("share_token") or token("r_", 18),
+            "share_expires_at": now() + timedelta(days=days),
+        }
+        db.reports.update_one({"_id": doc["_id"]}, {"$set": upd})
+        doc = db.reports.find_one({"_id": doc["_id"]})
+
+    status, err = reports.email_report(doc, recipients, note=note)
+    db.notifications.insert_one({
+        "workspace_id": g.ws_id, "event": "report_ready", "channel": "email",
+        "target": ", ".join(recipients), "subject": doc.get("title"),
+        "status": status, "error": err, "at": now(), "report_id": doc["_id"],
+    })
+    if status not in ("sent", "logged"):
+        raise ApiError(err or "Could not send the report email", 502, "email_failed")
+    audit("report.emailed", "report", doc["_id"], {"recipients": recipients, "status": status})
+    return jsonify({"ok": True, "status": status, "recipients": recipients, "share_url": reports.share_url(doc)})
+
+
 @bp.delete("/api/reports/<rid>")
 @require("member")
 def delete(rid):

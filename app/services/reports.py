@@ -105,7 +105,71 @@ def create_report(ws: dict, client_id, start, end, created_by=None, share_days: 
 
 
 def share_url(doc: dict) -> str:
-    return f"{Config.APP_URL}/r/{doc['share_token']}"
+    return f"{Config.APP_URL.rstrip('/')}/r/{doc['share_token']}"
+
+
+def email_report(doc: dict, recipients: list[str], *, note: str = "") -> tuple[str, str | None]:
+    """Email a report share link (+ summary) to one or more recipients."""
+    url = share_url(doc)
+    data = doc.get("data") or {}
+    summary = data.get("summary") or {}
+    period = data.get("period") or {}
+    title = doc.get("title") or "Watchfront report"
+    note = (note or "").strip()[:500]
+    uptime = summary.get("uptime_pct")
+    uptime_s = f"{uptime}%" if uptime is not None else "—"
+    incidents = summary.get("incidents_detected")
+    resolved = summary.get("incidents_resolved")
+    open_n = summary.get("incidents_open")
+    start = (period.get("start") or "")[:10]
+    end = (period.get("end") or "")[:10]
+    period_s = f"{start} → {end}" if start and end else "see report"
+    text = (
+        f"{title}\n\n"
+        f"Period: {period_s}\n"
+        f"Uptime: {uptime_s}\n"
+        f"Incidents: {incidents} detected · {resolved} resolved · {open_n} open\n\n"
+        f"{('Note: ' + note + chr(10) + chr(10)) if note else ''}"
+        f"View the full report:\n{url}\n\n"
+        "— Watchfront\n"
+    )
+    note_html = (
+        f'<p style="margin:14px 0 0;font-size:13px;line-height:1.55;font-weight:400;color:#5e3a54">'
+        f'<span style="color:#1c0f18">Note:</span> {notify._esc(note)}</p>'
+        if note else ""
+    )
+    inner = f"""\
+<div style="padding:22px 24px 28px">
+  <p style="margin:0;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#9b1b67">Client report</p>
+  <h1 style="margin:8px 0 0;font-size:18px;line-height:1.3;color:#1c0f18;font-weight:500">{notify._esc(title)}</h1>
+  <p style="margin:12px 0 0;font-size:13px;line-height:1.55;font-weight:400;color:#5e3a54">
+    Period {notify._esc(period_s)}. Open the link for the full health report — uptime, incidents, and actions.
+  </p>
+  <table style="width:100%;margin-top:14px;border-collapse:collapse;background:#faf6ed;border-radius:14px">
+    <tr><td style="padding:12px 14px">
+      <div style="font-size:10px;color:#9a8793;text-transform:uppercase;letter-spacing:0.06em;font-weight:500">Uptime</div>
+      <div style="margin-top:3px;font-size:14px;font-weight:500;color:#1c0f18">{notify._esc(uptime_s)}</div>
+      <div style="margin-top:10px;font-size:10px;color:#9a8793;text-transform:uppercase;letter-spacing:0.06em;font-weight:500">Incidents</div>
+      <div style="margin-top:3px;font-size:12px;font-weight:400;color:#5e3a54">
+        {notify._esc(incidents)} detected · {notify._esc(resolved)} resolved · {notify._esc(open_n)} open
+      </div>
+      {note_html}
+    </td></tr>
+  </table>
+  <p style="margin:16px 0 0">
+    <a href="{notify._esc(url)}" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:10px 18px;border-radius:999px;text-decoration:none;font-size:13px;font-weight:500">
+      View report →
+    </a>
+  </p>
+  <p style="margin:16px 0 0;font-size:11px;font-weight:400;color:#9a8793;word-break:break-all">{notify._esc(url)}</p>
+</div>
+"""
+    html = notify._email_shell(
+        accent="#9b1b67",
+        body_html=inner,
+        preheader=f"{title} — uptime {uptime_s}",
+    )
+    return notify.send_email(recipients, f"[Watchfront] {title}", text, html=html)
 
 
 def run_scheduled_reports() -> None:
@@ -118,11 +182,9 @@ def run_scheduled_reports() -> None:
         end = now()
         doc = create_report(ws, sch.get("client_id"), end - timedelta(days=days), end)
         s = doc["data"]["summary"]
-        body = (f"{doc['title']}\nPeriod: last {days} days\nUptime: {s['uptime_pct']}%\nIncidents detected: {s['incidents_detected']} "
-                f"(resolved {s['incidents_resolved']})\n\nView the full report: {share_url(doc)}")
-        status, err = notify.send_email(sch.get("recipients") or [], f"[Watchfront] {doc['title']}", body)
+        status, err = email_report(doc, sch.get("recipients") or [])
         db.notifications.insert_one({"workspace_id": ws["_id"], "event": "report_ready", "channel": "email",
                                      "target": ", ".join(sch.get("recipients") or []), "subject": doc["title"],
-                                     "status": status, "error": err, "at": now()})
+                                     "status": status, "error": err, "at": now(), "report_id": doc["_id"]})
         db.report_schedules.update_one({"_id": sch["_id"]}, {"$set": {"last_run_at": now(), "last_report_id": doc["_id"],
                                                                        "next_run_at": now() + timedelta(days=days)}})
