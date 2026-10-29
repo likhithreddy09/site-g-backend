@@ -250,10 +250,13 @@ def run_page_check(check_id) -> dict | None:
         db.visual_changes.insert_one({"workspace_id": chk["workspace_id"], "page_check_id": chk["_id"], "website_id": chk.get("website_id"),
                                       "url": chk["url"], "at": t, "diff_pct": vis["diff_pct"], "screenshot": vis["screenshot"],
                                       "baseline": vis["baseline"], "diff": vis["diff"], "status": "pending_review", "result_id": rid})
-        notify.dispatch(ws, "visual_change", f"Visual change on {chk['name']}",
-                        f"{chk['url']} looks different from the version you approved ({vis['diff_pct']}% of the screen changed). "
-                        "Open Watchfront to compare them side by side and tell us whether the change was on purpose.",
-                        severity="info", link=f"{Config.APP_URL}/app/checks/{chk['_id']}")
+        notify.dispatch(
+            ws, "visual_change", f"Visual change on {chk['name']}",
+            f"{chk['url']} looks different from the version you approved ({vis['diff_pct']}% of the screen changed). "
+            "Open Watchfront to compare them side by side and tell us whether the change was on purpose.",
+            severity="info", link=f"{Config.APP_URL}/app/checks/{chk['_id']}",
+            kind="visual_change",
+        )
 
     key = f"content:{chk['_id']}"
     if functional_fail:

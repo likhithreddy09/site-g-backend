@@ -17,12 +17,22 @@ def _event(kind: str, text: str, by: str = "system") -> dict:
     return {"at": now(), "type": kind, "by": by, "text": text}
 
 
+def _site_label(website_id) -> str | None:
+    if not website_id:
+        return None
+    site = get_db().websites.find_one({"_id": website_id}, {"name": 1, "url": 1})
+    if not site:
+        return None
+    return site.get("name") or site.get("url")
+
+
 def open_or_update(ws: dict, *, key: str, source_type: str, source_id, title: str, severity: str,
                    evidence: dict, website_id=None, client_id=None, summary: str = "") -> dict:
     """Group repeated failures into one incident, reopening recently resolved ones."""
     db = get_db()
     t = now()
     evidence = {**evidence, "at": evidence.get("at", t)}
+    site = _site_label(website_id)
     existing = db.incidents.find_one({"workspace_id": ws["_id"], "key": key, "status": {"$in": ACTIVE + ["ignored"]}},
                                      sort=[("started_at", -1)])
     if existing:
@@ -42,8 +52,11 @@ def open_or_update(ws: dict, *, key: str, source_type: str, source_id, title: st
             "$push": {"evidence": {"$each": [evidence], "$slice": -50},
                       "timeline": _event("reopened", "Issue detected again after resolution; incident reopened.")},
         })
-        notify.dispatch(ws, "incident_reopened", f"Reopened: {title}", summary or title,
-                        severity=severity, incident_id=recent["_id"], link=_link(recent["_id"]))
+        notify.dispatch(
+            ws, "incident_reopened", f"Reopened: {title}", summary or title,
+            severity=severity, incident_id=recent["_id"], link=_link(recent["_id"]),
+            kind=source_type, site=site,
+        )
         return recent
 
     doc = {
@@ -56,8 +69,10 @@ def open_or_update(ws: dict, *, key: str, source_type: str, source_id, title: st
         "timeline": [_event("opened", f"Incident opened: {title}")], "ai": None,
     }
     doc["_id"] = db.incidents.insert_one(doc).inserted_id
-    notify.dispatch(ws, "incident_opened", title, summary or title, severity=severity,
-                    incident_id=doc["_id"], link=_link(doc["_id"]))
+    notify.dispatch(
+        ws, "incident_opened", title, summary or title, severity=severity,
+        incident_id=doc["_id"], link=_link(doc["_id"]), kind=source_type, site=site,
+    )
     return doc
 
 
@@ -74,10 +89,12 @@ def auto_resolve(ws: dict, key: str, message: str = "Monitoring confirmed recove
         "$push": {"timeline": _event("resolved", message)},
     })
     mins = max(1, duration // 60)
-    notify.dispatch(ws, "incident_resolved", f"Recovered: {inc['title']}",
-                    f"{message} Total duration: ~{mins} min.", severity=inc["severity"],
-                    incident_id=inc["_id"], link=_link(inc["_id"]))
-
+    notify.dispatch(
+        ws, "incident_resolved", f"Recovered: {inc['title']}",
+        f"{message} Total duration: ~{mins} min.", severity=inc.get("severity") or "major",
+        incident_id=inc["_id"], link=_link(inc["_id"]),
+        kind=inc.get("source_type"), site=_site_label(inc.get("website_id")),
+    )
 
 def add_timeline(incident_id, kind: str, text: str, by: str) -> None:
     get_db().incidents.update_one({"_id": incident_id}, {"$push": {"timeline": _event(kind, text, by)}})
@@ -93,7 +110,11 @@ def run_escalations() -> None:
                                       "severity": {"$in": ["major", "critical"]}}):
             db.incidents.update_one({"_id": inc["_id"]}, {"$set": {"escalated_at": now()},
                                                           "$push": {"timeline": _event("escalated", "No acknowledgement within escalation window; escalated.")}})
-            notify.dispatch(ws, "escalation", f"Escalation: {inc['title']}",
-                            f"This {inc['severity']} incident has been open for more than {esc['after_minutes']} minutes without acknowledgement.",
-                            severity=inc["severity"], incident_id=inc["_id"], link=_link(inc["_id"]),
-                            extra_emails=esc.get("emails") or None)
+            notify.dispatch(
+                ws, "escalation", f"Escalation: {inc['title']}",
+                f"This {inc['severity']} incident has been open for more than {esc['after_minutes']} minutes without acknowledgement.",
+                severity=inc["severity"], incident_id=inc["_id"], link=_link(inc["_id"]),
+                extra_emails=esc.get("emails") or None,
+                kind=inc.get("source_type") or "escalation",
+                site=_site_label(inc.get("website_id")),
+            )

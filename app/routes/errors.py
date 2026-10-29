@@ -342,18 +342,35 @@ def write_events(ws: dict, site: dict, evs: list[dict]) -> dict:
         who = f"{users} visitor{'s' if users != 1 else ''}" if users else "real visitors"
         wc = int(gr.get("window_count", 0))
         if wc >= threshold > wc - a["visitors"]:
-            incidents.open_or_update(ws, key=f"{gr['kind']}err:{gr['_id']}", source_type="rum_api" if gr["kind"] == "api" else "js_errors",
-                                     source_id=gr["_id"], website_id=site["_id"], client_id=site.get("client_id"),
-                                     severity="major" if gr["kind"] == "api" or wc >= threshold * 5 else "minor",
-                                     title=f"{label} spike on {site['name']}: {gr['message'][:80]}",
-                                     summary=f"{wc} occurrences in the last 10 minutes, affecting {who}. Latest page: {gr.get('last_page')}",
-                                     evidence={"type": "error_group", "ref_id": gr["_id"], "summary": gr["message"][:200]})
+            # Spikes are major; very large spikes critical so they cut through quiet hours + mail filters.
+            sev = "critical" if wc >= threshold * 10 else "major"
+            incidents.open_or_update(
+                ws, key=f"{gr['kind']}err:{gr['_id']}",
+                source_type="rum_api" if gr["kind"] == "api" else "js_errors",
+                source_id=gr["_id"], website_id=site["_id"], client_id=site.get("client_id"),
+                severity=sev,
+                title=f"{label} spike on {site['name']}: {gr['message'][:80]}",
+                summary=(
+                    f"{wc} occurrences in the last 10 minutes, affecting {who}. "
+                    f"Latest page: {gr.get('last_page') or '—'}"
+                    + (f". Release: {gr.get('last_release')}" if gr.get("last_release") else "")
+                    + "."
+                ),
+                evidence={"type": "error_group", "ref_id": gr["_id"], "summary": gr["message"][:200]},
+            )
         elif gr.get("first_seen") == t and gr["kind"] == "js" and not gr.get("third_party") and rum.get("alert_new", True):
-            incidents.open_or_update(ws, key=f"jserr:{gr['_id']}", source_type="js_errors", source_id=gr["_id"], website_id=site["_id"],
-                                     client_id=site.get("client_id"), severity="minor",
-                                     title=f"New JavaScript error on {site['name']}: {gr['message'][:80]}",
-                                     summary=f"First seen just now on {gr.get('last_page')}" + (f" in release {gr['first_release']}" if gr.get("first_release") else "") + ".",
-                                     evidence={"type": "error_group", "ref_id": gr["_id"], "summary": gr["message"][:200]})
+            # First-party new JS errors are major so they show up in attention emails (not buried as minor).
+            incidents.open_or_update(
+                ws, key=f"jserr:{gr['_id']}", source_type="js_errors", source_id=gr["_id"],
+                website_id=site["_id"], client_id=site.get("client_id"), severity="major",
+                title=f"New JavaScript error on {site['name']}: {gr['message'][:80]}",
+                summary=(
+                    f"First seen just now on {gr.get('last_page') or '—'}"
+                    + (f" in release {gr['first_release']}" if gr.get("first_release") else "")
+                    + ". This looks like first-party code (not a known third-party script)."
+                ),
+                evidence={"type": "error_group", "ref_id": gr["_id"], "summary": gr["message"][:200]},
+            )
     return groups
 
 
