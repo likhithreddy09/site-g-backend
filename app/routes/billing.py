@@ -137,7 +137,7 @@ def checkout():
 
     order_id = f"wf_{str(g.ws_id)[-8:]}_{plan}_{token('', 8)}"
     # {order_id} placeholder is replaced by Cashfree on redirect (recommended).
-    return_url = f"{Config.APP_URL}/app/settings?tab=billing&order_id={{order_id}}"
+    return_url = f"{Config.APP_URL}/app/billing?order_id={{order_id}}"
     notify_url = f"{Config.PUBLIC_API_URL}/api/billing/webhook"
     plan_name = PLANS[plan]["name"]
 
