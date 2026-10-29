@@ -274,17 +274,50 @@ def get_website(sid):
     db = get_db()
     site = _get_site(sid)
     t = now()
-    site["uptime"] = {"24h": _uptime(site["_id"], t - timedelta(hours=24)), "7d": _uptime(site["_id"], t - timedelta(days=7)),
+    since24 = t - timedelta(hours=24)
+    site["uptime"] = {"24h": _uptime(site["_id"], since24), "7d": _uptime(site["_id"], t - timedelta(days=7)),
                       "30d": _uptime(site["_id"], t - timedelta(days=30))}
     site["client_name"] = (db.clients.find_one({"_id": site.get("client_id")}) or {}).get("name")
     site["open_incidents"] = ser(list(db.incidents.find({"website_id": site["_id"], "status": {"$in": ["open", "investigating"]}}).sort("started_at", -1)))
     console_attr = ' data-console-errors="true"' if (site.get("rum") or {}).get("console_errors") else ""
     site["snippet"] = f'<script src="{Config.PUBLIC_API_URL}/sdk.js" data-site-key="{site["site_key"]}"{console_attr} async></script>'
+    journeys_failing = db.browser_tests.count_documents({"website_id": site["_id"], "status": "failing"})
+    journeys_total = db.browser_tests.count_documents({"website_id": site["_id"]})
+    apis_failing = db.api_monitors.count_documents({"website_id": site["_id"], "status": {"$in": ["down", "failing", "degraded"]}})
+    apis_total = db.api_monitors.count_documents({"website_id": site["_id"]})
+    pages_total = db.page_checks.count_documents({"website_id": site["_id"]})
+    pages_failing = db.page_checks.count_documents({"website_id": site["_id"], "status": {"$in": ["failing", "failed", "error"]}})
+    visual_pending = db.visual_changes.count_documents({"website_id": site["_id"], "status": "pending_review"})
+    errors_active = db.error_groups.count_documents({"website_id": site["_id"], "status": "active"})
+    errors_24h = db.error_groups.count_documents({"website_id": site["_id"], "last_seen": {"$gte": since24}})
+    http_n = db.check_results.count_documents({"website_id": site["_id"], "kind": "http", "at": {"$gte": since24}})
+    http_fail = db.check_results.count_documents({"website_id": site["_id"], "kind": "http", "at": {"$gte": since24}, "ok": False})
+    avg = list(db.check_results.aggregate([
+        {"$match": {"website_id": site["_id"], "kind": "http", "at": {"$gte": since24}}},
+        {"$group": {"_id": None, "avg": {"$avg": "$response_ms"}}},
+    ]))
     site["counts"] = {
-        "api_monitors": db.api_monitors.count_documents({"website_id": site["_id"]}),
-        "page_checks": db.page_checks.count_documents({"website_id": site["_id"]}),
-        "browser_tests": db.browser_tests.count_documents({"website_id": site["_id"]}),
-        "error_groups": db.error_groups.count_documents({"website_id": site["_id"], "status": "active"}),
+        "api_monitors": apis_total,
+        "page_checks": pages_total,
+        "browser_tests": journeys_total,
+        "error_groups": errors_active,
+    }
+    site["insights"] = {
+        "checks_24h": http_n,
+        "failures_24h": http_fail,
+        "avg_response_ms_24h": round(avg[0]["avg"]) if avg and avg[0].get("avg") is not None else None,
+        "open_incidents": len(site["open_incidents"]),
+        "errors_active": errors_active,
+        "errors_24h": errors_24h,
+        "journeys_failing": journeys_failing,
+        "journeys_total": journeys_total,
+        "apis_failing": apis_failing,
+        "apis_total": apis_total,
+        "page_checks_failing": pages_failing,
+        "page_checks_total": pages_total,
+        "visual_pending": visual_pending,
+        "ssl_days_left": (site.get("ssl") or {}).get("days_left"),
+        "domain_days_left": (site.get("domain") or {}).get("days_left"),
     }
     return jsonify(ser(site))
 
