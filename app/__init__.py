@@ -24,8 +24,8 @@ def create_app(start_worker: bool | None = None) -> Flask:
          allow_headers=["Authorization", "Content-Type", "X-Workspace-Id"])
     init_db()
 
-    from .routes import auth, dashboard, errors, incidents, recorder, reports, testing, websites, workspace
-    for mod in (auth, workspace, websites, testing, errors, incidents, reports, dashboard, recorder):
+    from .routes import auth, billing, dashboard, errors, incidents, recorder, reports, testing, websites, workspace
+    for mod in (auth, workspace, websites, testing, errors, incidents, reports, dashboard, recorder, billing):
         app.register_blueprint(mod.bp)
 
     @app.errorhandler(ApiError)

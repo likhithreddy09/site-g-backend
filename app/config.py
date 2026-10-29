@@ -43,3 +43,9 @@ class Config:
     DISPATCH_INTERVAL_SEC = int(os.getenv("DISPATCH_INTERVAL_SEC", "5"))
 
     STORAGE_DIR = os.getenv("STORAGE_DIR", os.path.join(BASE_DIR, "storage"))
+
+    # Cashfree PG (never commit real keys — set via env / Railway)
+    CASHFREE_APP_ID = os.getenv("CASHFREE_APP_ID", "").strip()
+    CASHFREE_SECRET_KEY = os.getenv("CASHFREE_SECRET_KEY", "").strip()
+    CASHFREE_ENV = os.getenv("CASHFREE_ENV", "production").strip().lower()  # sandbox | production
+    CASHFREE_API_VERSION = os.getenv("CASHFREE_API_VERSION", "2023-08-01").strip()

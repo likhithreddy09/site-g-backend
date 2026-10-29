@@ -206,9 +206,13 @@ def plans():
 @bp.post("/plan")
 @require("owner")
 def change_plan():
+    """Downgrade to Free when Cashfree is enabled; paid upgrades go through /api/billing/checkout."""
+    from ..services import cashfree
     plan = body().get("plan")
     if plan not in PLANS or plan == "enterprise":
         raise ApiError("Choose a valid self-serve plan (Enterprise requires contacting sales)", 422)
+    if cashfree.enabled() and plan != "free" and (PLANS[plan].get("price_inr") or 0) > 0:
+        raise ApiError("Paid plans require Cashfree checkout. Use Pay & upgrade.", 402, "payment_required")
     db = get_db()
     new_limits = PLANS[plan]
     sites = db.websites.count_documents({"workspace_id": g.ws_id})
