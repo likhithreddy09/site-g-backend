@@ -67,9 +67,6 @@ def billing_config():
         "provider": "cashfree",
         "payment_methods": methods,
         "payment_methods_labels": _method_labels(methods),
-        "webhook_url": f"{Config.PUBLIC_API_URL}/api/billing/webhook",
-        "return_url_template": f"{Config.APP_URL}/app/settings?tab=billing&order_id={{order_id}}",
-        "app_url": Config.APP_URL,
         "requires_phone": True,
     })
 
@@ -119,7 +116,8 @@ def checkout():
             409,
         )
 
-    user = db.users.find_one({"_id": g.user_id}) or {}
+    user_id = g.user["_id"]
+    user = db.users.find_one({"_id": user_id}) or g.user or {}
     phone_raw = data.get("phone") or user.get("phone") or ""
     phone = cashfree.normalize_phone(phone_raw)
     if len(phone) != 10 or phone[0] not in "6789":
@@ -131,9 +129,9 @@ def checkout():
 
     # Persist phone for next checkout
     if phone != cashfree.normalize_phone(user.get("phone")):
-        db.users.update_one({"_id": g.user_id}, {"$set": {"phone": phone}})
+        db.users.update_one({"_id": user_id}, {"$set": {"phone": phone}})
 
-    order_id = f"sg_{str(g.ws_id)[-8:]}_{plan}_{token('', 8)}"
+    order_id = f"wf_{str(g.ws_id)[-8:]}_{plan}_{token('', 8)}"
     # {order_id} placeholder is replaced by Cashfree on redirect (recommended).
     return_url = f"{Config.APP_URL}/app/settings?tab=billing&order_id={{order_id}}"
     notify_url = f"{Config.PUBLIC_API_URL}/api/billing/webhook"
@@ -142,8 +140,8 @@ def checkout():
     cf_order = cashfree.create_order(
         order_id=order_id,
         amount_inr=amount,
-        customer_id=str(g.user_id),
-        customer_email=user.get("email") or "billing@watchfront.in",
+        customer_id=str(user_id),
+        customer_email=user.get("email") or "likhith.reddy@watchfront.in",
         customer_phone=phone,
         customer_name=user.get("name") or user.get("email") or "Customer",
         return_url=return_url,
@@ -152,7 +150,7 @@ def checkout():
         tags={
             "workspace_id": str(g.ws_id),
             "plan": plan,
-            "checkout_context": f"Watchfront {plan_name} · ₹{amount}/mo",
+            "checkout_context": f"Watchfront {plan_name} · Rs {amount}/mo",
         },
     )
 
@@ -164,7 +162,7 @@ def checkout():
         "order_id": order_id,
         "cf_order_id": cf_order.get("cf_order_id") or cf_order.get("order_id"),
         "workspace_id": g.ws_id,
-        "user_id": g.user_id,
+        "user_id": user_id,
         "plan": plan,
         "amount_inr": amount,
         "currency": "INR",
