@@ -181,7 +181,6 @@ def run_scheduled_reports() -> None:
         days = 7 if sch["frequency"] == "weekly" else 30
         end = now()
         doc = create_report(ws, sch.get("client_id"), end - timedelta(days=days), end)
-        s = doc["data"]["summary"]
         status, err = email_report(doc, sch.get("recipients") or [])
         db.notifications.insert_one({"workspace_id": ws["_id"], "event": "report_ready", "channel": "email",
                                      "target": ", ".join(sch.get("recipients") or []), "subject": doc["title"],
