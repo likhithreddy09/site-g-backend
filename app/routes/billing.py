@@ -35,7 +35,12 @@ def _apply_plan(ws_id, plan: str, *, payment: dict | None = None) -> dict:
             f"You have {sites} websites; the {new_limits['name']} plan allows {new_limits['websites']}. Remove some first.",
             409,
         )
-    upd = {"plan": plan, "trial": False, "plan_changed_at": now()}
+    upd = {
+        "plan": plan,
+        "trial": False,
+        "trial_ends_at": None,
+        "plan_changed_at": now(),
+    }
     if payment:
         prev = (db.workspaces.find_one({"_id": ws_id}, {"billing": 1}) or {}).get("billing") or {}
         upd["billing"] = {
@@ -57,7 +62,7 @@ def _apply_plan(ws_id, plan: str, *, payment: dict | None = None) -> dict:
 
 
 @bp.get("/config")
-@require()
+@require(allow_when_locked=True)
 def billing_config():
     methods = cashfree.payment_methods() if cashfree.enabled() else ""
     return jsonify({
@@ -96,7 +101,7 @@ def _method_labels(csv: str) -> list[dict]:
 
 
 @bp.post("/checkout")
-@require("owner")
+@require("owner", allow_when_locked=True)
 def checkout():
     if not cashfree.enabled():
         raise ApiError(
@@ -193,7 +198,7 @@ def checkout():
 
 
 @bp.get("/orders/<order_id>")
-@require("owner")
+@require("owner", allow_when_locked=True)
 def order_status(order_id: str):
     db = get_db()
     local = db.billing_orders.find_one({"order_id": order_id, "workspace_id": g.ws_id})

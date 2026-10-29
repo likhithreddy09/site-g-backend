@@ -62,12 +62,18 @@ def auth_required(fn):
     return wrapper
 
 
-def require(role: str = "client"):
-    """Authenticate the user and resolve the active workspace from X-Workspace-Id."""
+def require(role: str = "client", *, allow_when_locked: bool = False):
+    """Authenticate the user and resolve the active workspace from X-Workspace-Id.
+
+    Mutating requests on a trial-locked workspace are blocked unless allow_when_locked=True
+    (used for billing checkout so locked users can still upgrade).
+    """
 
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
+            from .plans import require_unlocked
+
             g.user = _current_user()
             ws_id = request.headers.get("X-Workspace-Id") or request.args.get("workspace_id")
             if not ws_id:
@@ -82,6 +88,11 @@ def require(role: str = "client"):
             g.role = member["role"]
             g.ws = db.workspaces.find_one({"_id": member["workspace_id"]})
             g.ws_id = g.ws["_id"]
+            if (
+                not allow_when_locked
+                and request.method not in ("GET", "HEAD", "OPTIONS")
+            ):
+                require_unlocked(g.ws)
             return fn(*args, **kwargs)
 
         return wrapper

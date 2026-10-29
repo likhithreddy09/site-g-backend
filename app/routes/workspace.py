@@ -3,7 +3,7 @@ from flask import Blueprint, g, jsonify, request
 from ..audit import audit
 from ..config import Config
 from ..db import get_db
-from ..plans import PLANS, limits, usage
+from ..plans import PLANS, access, limits, usage
 from ..security import require, validate_target
 from ..services import notify
 from ..utils import ApiError, clamp_int, now, oid, ser, valid_email
@@ -14,12 +14,18 @@ bp = Blueprint("workspace", __name__, url_prefix="/api/workspace")
 
 def _ws_payload(ws: dict) -> dict:
     out = ser(ws)
+    acc = access(ws)
     out["limits"] = limits(ws)
     out["usage"] = usage(ws)
     out["notifications"] = notify.settings_for(ws)
     out["role"] = g.role
     out["smtp_configured"] = bool(Config.SMTP_HOST)
     out["ai_engine"] = Config.OPENAI_MODEL if Config.OPENAI_API_KEY else "heuristic"
+    out["access"] = acc
+    out["locked"] = acc["locked"]
+    out["trial_active"] = acc["trial_active"]
+    out["trial_ends_at"] = acc["trial_ends_at"]
+    out["trial_seconds_left"] = acc["seconds_left"]
     return out
 
 
@@ -30,7 +36,7 @@ def get_ws():
 
 
 @bp.patch("")
-@require("admin")
+@require("admin")  # blocked when trial-locked via require()
 def update_ws():
     data = body()
     upd = {}
@@ -198,13 +204,19 @@ def remove_member(mid):
 
 
 @bp.get("/plans")
-@require()
+@require(allow_when_locked=True)
 def plans():
-    return jsonify({"current": g.ws.get("plan"), "plans": PLANS, "usage": usage(g.ws)})
+    return jsonify({
+        "current": g.ws.get("plan"),
+        "plans": PLANS,
+        "usage": usage(g.ws),
+        "access": access(g.ws),
+        "effective_plan": access(g.ws)["effective_plan"],
+    })
 
 
 @bp.post("/plan")
-@require("owner")
+@require("owner", allow_when_locked=True)
 def change_plan():
     """Downgrade to Free when Cashfree is enabled; paid upgrades go through /api/billing/checkout."""
     from ..services import cashfree
@@ -218,7 +230,10 @@ def change_plan():
     sites = db.websites.count_documents({"workspace_id": g.ws_id})
     if sites > new_limits["websites"]:
         raise ApiError(f"You have {sites} websites; the {new_limits['name']} plan allows {new_limits['websites']}. Remove some first.", 409)
-    db.workspaces.update_one({"_id": g.ws_id}, {"$set": {"plan": plan, "trial": False, "plan_changed_at": now()}})
+    db.workspaces.update_one(
+        {"_id": g.ws_id},
+        {"$set": {"plan": plan, "trial": False, "trial_ends_at": None, "plan_changed_at": now()}},
+    )
     db.websites.update_many({"workspace_id": g.ws_id, "interval_sec": {"$lt": new_limits["min_interval_sec"]}},
                             {"$set": {"interval_sec": new_limits["min_interval_sec"]}})
     audit("plan.changed", "workspace", g.ws_id, {"from": g.ws.get("plan"), "to": plan})

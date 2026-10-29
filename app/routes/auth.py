@@ -3,7 +3,7 @@ from pymongo.errors import DuplicateKeyError
 
 from ..audit import audit
 from ..db import get_db
-from ..plans import DEFAULT_PLAN
+from ..plans import new_trial_fields
 from ..security import auth_required, check_password, hash_password, make_token
 from ..services import notify
 from ..utils import ApiError, now, ser, valid_email
@@ -14,9 +14,15 @@ bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 def create_workspace(user: dict, name: str) -> dict:
     db = get_db()
-    ws = {"name": name.strip()[:80] or "My Agency", "owner_id": user["_id"], "plan": DEFAULT_PLAN, "trial": True,
-          "created_at": now(), "branding": {}, "notifications": {"emails": [user["email"]]},
-          "settings": {"ai_enabled": True, "rum_defaults": {"sample_rate": 1.0}}}
+    ws = {
+        "name": name.strip()[:80] or "My Agency",
+        "owner_id": user["_id"],
+        **new_trial_fields(),
+        "created_at": now(),
+        "branding": {},
+        "notifications": {"emails": [user["email"]]},
+        "settings": {"ai_enabled": True, "rum_defaults": {"sample_rate": 1.0}},
+    }
     ws["_id"] = db.workspaces.insert_one(ws).inserted_id
     db.members.insert_one({"workspace_id": ws["_id"], "user_id": user["_id"], "email": user["email"], "role": "owner",
                            "status": "active", "client_ids": [], "created_at": now()})
