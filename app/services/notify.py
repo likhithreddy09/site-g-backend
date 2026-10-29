@@ -1,7 +1,9 @@
 import html as html_lib
 import logging
+import mimetypes
 import smtplib
 from email.message import EmailMessage
+from pathlib import Path
 
 import requests
 
@@ -11,6 +13,8 @@ from ..plans import feature
 from ..utils import now
 
 log = logging.getLogger("watchfront.notify")
+
+_EMAIL_STATIC = Path(__file__).resolve().parent.parent / "static" / "email"
 
 DEFAULT_SETTINGS = {
     "emails": [],
@@ -51,10 +55,32 @@ def _esc(v) -> str:
     return html_lib.escape("" if v is None else str(v))
 
 
-def email_asset(name: str) -> str:
-    """Absolute URL for email GIFs/heroes (served by the API at /email/…)."""
+def email_asset(name: str, *, inline: bool = True) -> str:
+    """URL for email GIFs/heroes. Prefer cid: so clients render without a remote fetch."""
+    name = name.lstrip("/")
+    if inline and (_EMAIL_STATIC / name).is_file():
+        return f"cid:{name}"
     base = (Config.PUBLIC_API_URL or Config.APP_URL).rstrip("/")
-    return f"{base}/email/{name.lstrip('/')}"
+    return f"{base}/email/{name}"
+
+
+def _inline_cids_from_html(html: str) -> list[str]:
+    """Collect cid: filenames referenced in HTML that exist in static/email."""
+    found: list[str] = []
+    needle = 'src="cid:'
+    start = 0
+    while True:
+        i = html.find(needle, start)
+        if i < 0:
+            break
+        j = html.find('"', i + len(needle))
+        if j < 0:
+            break
+        name = html[i + len(needle):j]
+        if name and name not in found and (_EMAIL_STATIC / name).is_file():
+            found.append(name)
+        start = j + 1
+    return found
 
 
 def _email_shell(*, accent: str, body_html: str, preheader: str = "") -> str:
@@ -250,6 +276,15 @@ def send_email(
     msg.set_content(body)
     if html:
         msg.add_alternative(html, subtype="html")
+        # Attach animated GIFs / heroes referenced as cid:… so Gmail/Outlook show motion
+        # without depending on a remote CDN fetch (many clients block remote images).
+        html_part = msg.get_payload()[-1]
+        for name in _inline_cids_from_html(html):
+            path = _EMAIL_STATIC / name
+            data = path.read_bytes()
+            ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            maintype, subtype = ctype.split("/", 1)
+            html_part.add_related(data, maintype=maintype, subtype=subtype, cid=name)
     try:
         with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as s:
             if Config.SMTP_TLS:
