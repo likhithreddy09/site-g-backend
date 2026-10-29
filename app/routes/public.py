@@ -1,7 +1,6 @@
 """Public (unauthenticated) endpoints — book a call, etc."""
 from __future__ import annotations
 
-import html
 import logging
 import re
 
@@ -47,9 +46,8 @@ def book_call():
     get_db().call_bookings.insert_one(doc)
 
     team = Config.SMTP_USER or "likhith.reddy@watchfront.in"
-    name_h, topic_h, slot_h, note_h = html.escape(name), html.escape(topic), html.escape(slot), html.escape(note)
     # Confirmation to the visitor
-    visitor_subject = "Watchfront call confirmed"
+    visitor_subject = "You're booked — Watchfront call confirmed"
     visitor_body = (
         f"Hi {name},\n\n"
         f"Thanks for booking a call with Watchfront.\n\n"
@@ -61,17 +59,7 @@ def book_call():
         "The Watchfront team\n"
         f"{Config.APP_URL}\n"
     )
-    visitor_html = f"""\
-<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#1c0f18;line-height:1.55">
-  <p>Hi {name_h},</p>
-  <p>Thanks for booking a call with <strong>Watchfront</strong>.</p>
-  <p><strong>Topic:</strong> {topic_h}<br/>
-  <strong>When:</strong> {slot_h}</p>
-  {f'<p><strong>Note:</strong> {note_h}</p>' if note else ''}
-  <p>We'll join at the scheduled time. If you need to reschedule, just reply to this email.</p>
-  <p style="color:#5e3a54">Looking forward to speaking with you,<br/>The Watchfront team</p>
-</div>
-"""
+    visitor_html = notify.book_call_html(name=name, topic=topic, slot=slot, note=note)
     st1, err1 = notify.send_email([email], visitor_subject, visitor_body, html=visitor_html)
 
     # Notify the team

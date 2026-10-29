@@ -51,6 +51,18 @@ def create_app(start_worker: bool | None = None) -> Flask:
         ctype = mimetypes.guess_type(rel)[0] or "application/octet-stream"
         return send_file(BytesIO(data), mimetype=ctype, max_age=3600, download_name=os.path.basename(rel))
 
+    @app.get("/email/<path:name>")
+    def email_static(name):
+        """Public email assets (GIFs/heroes) referenced from transactional mail."""
+        if ".." in name or name.startswith("/"):
+            abort(404)
+        base = os.path.join(os.path.dirname(__file__), "static", "email")
+        path = os.path.normpath(os.path.join(base, name))
+        if not path.startswith(os.path.normpath(base)) or not os.path.isfile(path):
+            abort(404)
+        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return send_file(path, mimetype=ctype, max_age=86400 * 7)
+
     @app.get("/healthz")
     def healthz():
         return {"ok": True}

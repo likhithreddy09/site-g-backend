@@ -163,9 +163,13 @@ def invite():
     doc = {"workspace_id": g.ws_id, "email": email, "role": role, "client_ids": client_ids, "created_at": now(),
            "user_id": user["_id"] if user else None, "status": "active" if user else "invited", "invited_by": g.user["_id"]}
     doc["_id"] = db.members.insert_one(doc).inserted_id
-    notify.send_email([email], f"You've been invited to {g.ws['name']} on Watchfront",
-                      f"{g.user.get('name') or g.user['email']} invited you to join {g.ws['name']} as {role}.\n"
-                      f"{'Sign in' if user else 'Create an account with this email'} at {Config.APP_URL}/{'login' if user else 'register'}")
+    notify.send_invite_email(
+        to_email=email,
+        workspace_name=g.ws["name"],
+        inviter_name=g.user.get("name") or g.user["email"],
+        role=role,
+        has_account=bool(user),
+    )
     audit("member.invited", "member", doc["_id"], {"email": email, "role": role})
     return jsonify(ser(doc)), 201
 
