@@ -150,11 +150,11 @@ def checkout():
         customer_name=user.get("name") or user.get("email") or "Customer",
         return_url=return_url,
         notify_url=notify_url,
-        order_note=f"Watchfront {plan_name} plan — monthly",
+        order_note=f"Watchfront {plan_name} plan monthly",
+        # Cashfree: checkout_context max 100 chars, no HTML/URLs/line breaks/emojis/special symbols.
         tags={
-            "workspace_id": str(g.ws_id),
             "plan": plan,
-            "checkout_context": f"Watchfront {plan_name} · Rs {amount}/mo",
+            "checkout_context": f"Watchfront {plan_name} plan INR {int(amount)} per month"[:100],
         },
     )
 

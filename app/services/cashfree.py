@@ -64,6 +64,30 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _sanitize_order_tags(tags: dict[str, str] | None) -> dict[str, str]:
+    """Cashfree rejects HTML, URLs, line breaks, emojis in checkout_context; keep tags ASCII-safe."""
+    out: dict[str, str] = {}
+    for k, v in (tags or {}).items():
+        key = re.sub(r"[^a-zA-Z0-9_]", "", str(k))[:32]
+        if not key:
+            continue
+        val = str(v)
+        if key == "checkout_context":
+            # ASCII letters/digits/spaces/hyphen/period only, max 100
+            val = re.sub(r"[^a-zA-Z0-9 .,-]", " ", val)
+            val = re.sub(r"\s+", " ", val).strip()[:100]
+            if not val:
+                continue
+        elif key == "brand_image":
+            if not val.startswith("https://"):
+                continue  # drop invalid brand image rather than fail the order
+            val = val[:512]
+        else:
+            val = val[:128]
+        out[key] = val
+    return out
+
+
 def create_order(
     *,
     order_id: str,
@@ -114,7 +138,7 @@ def create_order(
         },
         "order_meta": order_meta,
         "order_note": (order_note or "Watchfront subscription")[:200],
-        "order_tags": {str(k)[:32]: str(v)[:128] for k, v in (tags or {}).items()},
+        "order_tags": _sanitize_order_tags(tags),
     }
 
     r = requests.post(f"{base_url()}/orders", json=payload, headers=_headers(), timeout=30)
@@ -158,6 +182,13 @@ def create_order(
                 "Cashfree rejected the mobile number. Use a valid 10-digit Indian mobile.",
                 422,
                 "cashfree_invalid_phone",
+                extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
+            )
+        if "order_tags" in low or cf_code == "order_tags_invalid":
+            raise ApiError(
+                "Payment metadata was rejected by Cashfree. Please retry — if it keeps failing, contact support.",
+                502,
+                "cashfree_order_tags_invalid",
                 extra={"provider": "cashfree", "provider_code": cf_code, "provider_message": msg},
             )
         raise ApiError(
