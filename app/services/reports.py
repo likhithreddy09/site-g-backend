@@ -120,7 +120,7 @@ def run_scheduled_reports() -> None:
         s = doc["data"]["summary"]
         body = (f"{doc['title']}\nPeriod: last {days} days\nUptime: {s['uptime_pct']}%\nIncidents detected: {s['incidents_detected']} "
                 f"(resolved {s['incidents_resolved']})\n\nView the full report: {share_url(doc)}")
-        status, err = notify.send_email(sch.get("recipients") or [], f"[SiteGuard] {doc['title']}", body)
+        status, err = notify.send_email(sch.get("recipients") or [], f"[Watchfront] {doc['title']}", body)
         db.notifications.insert_one({"workspace_id": ws["_id"], "event": "report_ready", "channel": "email",
                                      "target": ", ".join(sch.get("recipients") or []), "subject": doc["title"],
                                      "status": status, "error": err, "at": now()})

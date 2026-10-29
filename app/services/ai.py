@@ -9,7 +9,7 @@ from ..plans import add_usage, limits, usage
 from ..security import redact
 from ..utils import ApiError, now, ser
 
-SYSTEM_PROMPT = """You are SiteGuard's incident analyst for web agencies.
+SYSTEM_PROMPT = """You are Watchfront's incident analyst for web agencies.
 You receive structured monitoring evidence about one incident. Rules:
 - Only state as an observation what is directly present in the evidence. Cite evidence ids (e.g. "E2").
 - Anything inferred must be a hypothesis with a confidence of low, medium or high.
@@ -116,7 +116,7 @@ def _heuristic(inc: dict, ev: list[dict]) -> dict:
     if not hyps:
         hyps.append({"text": "Not enough correlated evidence to suggest a specific cause.", "confidence": "low", "evidence": []})
     if "browser_error" not in kinds:
-        missing.append("No browser JavaScript errors recorded — install the SiteGuard script to capture frontend errors.")
+        missing.append("No browser JavaScript errors recorded — install the Watchfront script to capture frontend errors.")
     if "browser_test" not in kinds and st != "browser_test":
         missing.append("No user-journey test covers this website.")
     missing.append("No deployment records are linked; deployment timing cannot be correlated.")
@@ -128,7 +128,7 @@ def _heuristic(inc: dict, ev: list[dict]) -> dict:
         "stakeholder_summary": f"We detected an issue: {inc['title'].lower()}. It was first detected at {ser(inc['started_at'])[:16].replace('T', ' ')} UTC "
                                f"and {status_txt}. Our team {'resolved it and continues to monitor' if inc['status'] == 'resolved' else 'is investigating'}.",
         "resolution_note_draft": f"Issue: {inc['title']}.\nDetected: {ser(inc['started_at'])[:16]} UTC.\nCause: [confirm cause].\n"
-                                 f"Fix applied: [describe fix].\nVerification: SiteGuard monitoring confirmed recovery.",
+                                 f"Fix applied: [describe fix].\nVerification: Watchfront monitoring confirmed recovery.",
     }
 
 

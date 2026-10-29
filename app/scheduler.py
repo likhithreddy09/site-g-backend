@@ -20,7 +20,7 @@ from .plans import limits
 from .services import artifacts, browser, checks, incidents, reports
 from .utils import now
 
-log = logging.getLogger("siteguard.scheduler")
+log = logging.getLogger("watchfront.scheduler")
 
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}"
 

@@ -1,10 +1,14 @@
-"""Cashfree Payment Gateway helpers (server-side only)."""
+"""Cashfree Payment Gateway helpers (server-side only).
+
+Follows Cashfree hosted web checkout:
+https://www.cashfree.com/docs/payments/online/web/redirect
+"""
 from __future__ import annotations
 
 import base64
-import hashlib
 import hmac
 import logging
+import re
 from typing import Any
 
 import requests
@@ -12,7 +16,11 @@ import requests
 from ..config import Config
 from ..utils import ApiError
 
-log = logging.getLogger("siteguard.cashfree")
+log = logging.getLogger("watchfront.cashfree")
+
+# Modes Cashfree accepts in order_meta.payment_methods (comma-separated).
+# Leave blank via env to show every method enabled on the merchant account.
+DEFAULT_PAYMENT_METHODS = "cc,dc,upi,nb,app,paylater"
 
 
 def enabled() -> bool:
@@ -27,44 +35,112 @@ def base_url() -> str:
     return "https://sandbox.cashfree.com/pg" if mode() == "sandbox" else "https://api.cashfree.com/pg"
 
 
+def payment_methods() -> str:
+    raw = (Config.CASHFREE_PAYMENT_METHODS or DEFAULT_PAYMENT_METHODS).strip()
+    # Normalise: lowercase, no spaces
+    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    return ",".join(parts)
+
+
+def normalize_phone(raw: str | None) -> str:
+    """Cashfree expects a 10-digit Indian mobile for domestic PG (no +91 prefix)."""
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if digits.startswith("91") and len(digits) >= 12:
+        digits = digits[-10:]
+    elif len(digits) > 10:
+        digits = digits[-10:]
+    return digits
+
+
 def _headers() -> dict[str, str]:
     if not enabled():
         raise ApiError("Cashfree is not configured", 503, "billing_unavailable")
     return {
         "Content-Type": "application/json",
+        "Accept": "application/json",
         "x-client-id": Config.CASHFREE_APP_ID,
         "x-client-secret": Config.CASHFREE_SECRET_KEY,
         "x-api-version": Config.CASHFREE_API_VERSION,
     }
 
 
-def create_order(*, order_id: str, amount_inr: float, customer_id: str, customer_email: str,
-                 customer_phone: str, customer_name: str, return_url: str, notify_url: str,
-                 tags: dict[str, str] | None = None) -> dict[str, Any]:
-    payload = {
+def create_order(
+    *,
+    order_id: str,
+    amount_inr: float,
+    customer_id: str,
+    customer_email: str,
+    customer_phone: str,
+    customer_name: str,
+    return_url: str,
+    notify_url: str,
+    order_note: str = "",
+    tags: dict[str, str] | None = None,
+    methods: str | None = None,
+) -> dict[str, Any]:
+    phone = normalize_phone(customer_phone)
+    if len(phone) != 10 or phone[0] not in "6789":
+        raise ApiError(
+            "Enter a valid 10-digit Indian mobile number for checkout (required by Cashfree).",
+            422,
+            "invalid_phone",
+        )
+
+    if mode() == "production":
+        if not notify_url.startswith("https://"):
+            raise ApiError("PUBLIC_API_URL must be https for Cashfree notify_url in production", 500)
+        if not return_url.startswith("https://"):
+            raise ApiError("APP_URL must be https for Cashfree return_url in production", 500)
+
+    methods_csv = (methods if methods is not None else payment_methods()).strip()
+
+    order_meta: dict[str, Any] = {
+        # Cashfree replaces {order_id} when redirecting back from bank/UPI pages.
+        "return_url": return_url,
+        "notify_url": notify_url,
+    }
+    if methods_csv:
+        order_meta["payment_methods"] = methods_csv
+
+    payload: dict[str, Any] = {
         "order_id": order_id,
         "order_amount": round(float(amount_inr), 2),
         "order_currency": "INR",
         "customer_details": {
-            "customer_id": customer_id[:50],
-            "customer_email": (customer_email or "billing@siteguard.app")[:100],
-            "customer_phone": (customer_phone or "9999999999")[:15],
-            "customer_name": (customer_name or "SiteGuard")[:100],
+            "customer_id": str(customer_id)[:50],
+            "customer_email": (customer_email or "billing@watchfront.in")[:100],
+            "customer_phone": phone,
+            "customer_name": (customer_name or "Customer")[:100],
         },
-        "order_meta": {
-            "return_url": return_url,
-            "notify_url": notify_url,
-        },
+        "order_meta": order_meta,
+        "order_note": (order_note or "Watchfront subscription")[:200],
         "order_tags": {str(k)[:32]: str(v)[:128] for k, v in (tags or {}).items()},
     }
+
     r = requests.post(f"{base_url()}/orders", json=payload, headers=_headers(), timeout=30)
     if r.status_code >= 400:
-        log.warning("cashfree create_order failed: %s %s", r.status_code, r.text[:500])
+        log.warning("cashfree create_order failed: %s %s", r.status_code, r.text[:800])
         try:
-            detail = r.json().get("message") or r.text
+            body = r.json()
+            detail = body.get("message") or body.get("error") or r.text
+            code = body.get("code") or body.get("type") or ""
         except Exception:  # noqa: BLE001
-            detail = r.text
-        raise ApiError(f"Cashfree order failed: {detail}", 502, "cashfree_error")
+            detail, code = r.text, ""
+        msg = str(detail)
+        # Common go-live blockers surfaced clearly in the UI
+        low = msg.lower()
+        if "transaction" in low and "not enabled" in low:
+            msg = (
+                "Cashfree production transactions are not enabled yet. "
+                "Complete KYC, enable Payment Gateway, and whitelist your domain "
+                "(Developers → Whitelisting) in the Cashfree dashboard."
+            )
+        elif "whitelist" in low or "domain" in low:
+            msg = (
+                "Domain not whitelisted with Cashfree. "
+                "Add https://watchfront.in in Developers → Whitelisting."
+            )
+        raise ApiError(f"Cashfree: {msg}" + (f" [{code}]" if code else ""), 502, "cashfree_error")
     return r.json()
 
 
@@ -73,6 +149,30 @@ def get_order(order_id: str) -> dict[str, Any]:
     if r.status_code >= 400:
         raise ApiError(f"Could not fetch Cashfree order ({r.status_code})", 502, "cashfree_error")
     return r.json()
+
+
+def get_payments(order_id: str) -> list[dict[str, Any]]:
+    """Confirm payment — Step 3 of Cashfree web checkout docs."""
+    r = requests.get(f"{base_url()}/orders/{order_id}/payments", headers=_headers(), timeout=20)
+    if r.status_code >= 400:
+        log.warning("cashfree get_payments failed: %s %s", r.status_code, r.text[:300])
+        return []
+    data = r.json()
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("payments"), list):
+        return data["payments"]
+    return []
+
+
+def order_is_paid(order: dict[str, Any], payments: list[dict[str, Any]] | None = None) -> bool:
+    status = (order.get("order_status") or "").upper()
+    if status in ("PAID", "ACTIVE"):
+        return True
+    for p in payments or []:
+        if (p.get("payment_status") or "").upper() == "SUCCESS":
+            return True
+    return False
 
 
 def verify_webhook_signature(signature: str, raw_body: str, timestamp: str) -> bool:

@@ -83,7 +83,7 @@ class _Guard:
             return route.abort("blockedbyclient")
         headers = None
         if host == self.start_host:
-            headers = {**request.headers, "x-siteguard-test": "1"}
+            headers = {**request.headers, "x-watchfront-test": "1"}
         return route.continue_(headers=headers) if headers else route.continue_()
 
 
@@ -159,7 +159,7 @@ def run_page_check(check_id) -> dict | None:
         try:
             with sync_playwright() as p:
                 browser = _launch(p)
-                ctx = browser.new_context(viewport=chk.get("viewport") or VIEWPORT, user_agent="Mozilla/5.0 SiteGuardBot/1.0")
+                ctx = browser.new_context(viewport=chk.get("viewport") or VIEWPORT, user_agent="Mozilla/5.0 WatchfrontBot/1.0")
                 page = ctx.new_page()
                 page.route("**/*", _Guard(urlparse(chk["url"]).hostname, [], False))
                 _attach_collectors(page, console, network)
@@ -252,7 +252,7 @@ def run_page_check(check_id) -> dict | None:
                                       "baseline": vis["baseline"], "diff": vis["diff"], "status": "pending_review", "result_id": rid})
         notify.dispatch(ws, "visual_change", f"Visual change on {chk['name']}",
                         f"{chk['url']} looks different from the version you approved ({vis['diff_pct']}% of the screen changed). "
-                        "Open SiteGuard to compare them side by side and tell us whether the change was on purpose.",
+                        "Open Watchfront to compare them side by side and tell us whether the change was on purpose.",
                         severity="info", link=f"{Config.APP_URL}/app/checks/{chk['_id']}")
 
     key = f"content:{chk['_id']}"
@@ -300,7 +300,7 @@ def render_value(v: str | None) -> str:
     ts = str(int(time.time()))
     rnd = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     return (v.replace("{{timestamp}}", ts).replace("{{random}}", rnd)
-             .replace("{{email}}", f"siteguard-test+{ts}{rnd}@example.com"))
+             .replace("{{email}}", f"watchfront-test+{ts}{rnd}@example.com"))
 
 
 def friendly_error(step: dict, msg: str) -> str:
@@ -317,11 +317,11 @@ def friendly_error(step: dict, msg: str) -> str:
     if action == "assert_not_visible":
         return f"{what[0].upper() + what[1:]} was still on the page when it should have disappeared."
     if "navigation blocked" in low:
-        return "SiteGuard blocked this address for safety (private or internal network)."
+        return "Watchfront blocked this address for safety (private or internal network)."
     if action == "goto" or "net::err" in low or "navigating to" in low:
         return "The page could not be opened — the site may be down, slow, or blocking automated visitors."
     if "strict mode violation" in low:
-        return f"More than one match was found for {what}. Re-record this step so SiteGuard can pick a more specific target."
+        return f"More than one match was found for {what}. Re-record this step so Watchfront can pick a more specific target."
     if "not visible" in low or "outside of the viewport" in low or "intercepts pointer events" in low:
         return f"{what[0].upper() + what[1:]} was found but covered or hidden (for example by a popup or cookie banner)."
     if "timeout" in low or "waiting for" in low:
@@ -351,7 +351,7 @@ def _execute_steps(test: dict, ws_id) -> dict:
     guard = _Guard(urlparse(test["start_url"]).hostname, safety.get("blocked_patterns") or [], bool(safety.get("allow_payments")))
     with sync_playwright() as p:
         browser = _launch(p)
-        ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 SiteGuardBot/1.0 (synthetic test)")
+        ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 WatchfrontBot/1.0 (synthetic test)")
         page = ctx.new_page()
         page.route("**/*", guard)
         _attach_collectors(page, console, network)

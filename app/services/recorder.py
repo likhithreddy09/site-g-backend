@@ -144,7 +144,7 @@ class RecorderSession:
         try:
             with sync_playwright() as p:
                 browser = _launch(p)
-                ctx = browser.new_context(viewport=VIEW, user_agent="Mozilla/5.0 SiteGuardBot/1.0 (journey recorder)")
+                ctx = browser.new_context(viewport=VIEW, user_agent="Mozilla/5.0 WatchfrontBot/1.0 (journey recorder)")
                 self.page = ctx.new_page()
                 self.page.set_default_timeout(10000)
                 self.page.route("**/*", _Guard(urlparse(self.start_url).hostname, [], False))

@@ -5,6 +5,7 @@ from ..audit import audit
 from ..db import get_db
 from ..plans import DEFAULT_PLAN
 from ..security import auth_required, check_password, hash_password, make_token
+from ..services import notify
 from ..utils import ApiError, now, ser, valid_email
 from . import body
 
@@ -63,6 +64,11 @@ def register():
     _accept_invites(user)
     if data.get("workspace_name") or not _workspaces_for(user):
         create_workspace(user, data.get("workspace_name") or f"{user['name']}'s Agency")
+    # Welcome mail is best-effort — never block signup if SMTP hiccups.
+    try:
+        notify.send_welcome_email(user)
+    except Exception:  # noqa: BLE001
+        pass
     return jsonify(_session(user)), 201
 
 

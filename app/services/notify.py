@@ -9,7 +9,7 @@ from ..db import get_db
 from ..plans import feature
 from ..utils import now
 
-log = logging.getLogger("siteguard.notify")
+log = logging.getLogger("watchfront.notify")
 
 DEFAULT_SETTINGS = {
     "emails": [],
@@ -72,7 +72,7 @@ def _slack_blocks(subject: str, body: str, *, severity: str, event: str, link: s
     ]
     if link:
         blocks.append({"type": "actions", "elements": [
-            {"type": "button", "text": {"type": "plain_text", "text": "Open in SiteGuard"}, "url": link, "style": "primary"}
+            {"type": "button", "text": {"type": "plain_text", "text": "Open in Watchfront"}, "url": link, "style": "primary"}
         ]})
     return {
         "text": f"{subject}\n{body}",
@@ -113,6 +113,54 @@ def send_email(to: list[str], subject: str, body: str, html: str | None = None) 
         return "failed", str(e)
 
 
+def send_welcome_email(user: dict) -> tuple[str, str | None]:
+    """Warm welcome + thanks email after a new account is created."""
+    name = (user.get("name") or "").strip() or "there"
+    email = user.get("email") or ""
+    app = Config.APP_URL.rstrip("/")
+    subject = "Welcome to Watchfront — thank you for joining us"
+    text = (
+        f"Hi {name},\n\n"
+        "Welcome to Watchfront — and thank you for trusting us with your client websites.\n\n"
+        "You're all set. Here's a quick start:\n"
+        f"  1. Open your dashboard: {app}/app\n"
+        "  2. Add your first website (or import a CSV of client sites)\n"
+        "  3. Turn on alerts so you know before your clients do\n\n"
+        "We're grateful you're here. If anything feels unclear, just reply to this email — "
+        "a human on the Watchfront team will help.\n\n"
+        f"Sign in anytime: {app}/login\n\n"
+        "With gratitude,\n"
+        "The Watchfront team\n"
+        f"{app}\n"
+    )
+    html = f"""\
+<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#1c0f18;line-height:1.55">
+  <p style="font-size:18px">Hi {name},</p>
+  <p>Welcome to <strong>Watchfront</strong> — and thank you for trusting us with your client websites.</p>
+  <p>You're all set. Here's a quick start:</p>
+  <ol>
+    <li>Open your <a href="{app}/app" style="color:#9b1b67">dashboard</a></li>
+    <li>Add your first website (or import a CSV of client sites)</li>
+    <li>Turn on alerts so you know before your clients do</li>
+  </ol>
+  <p>We're grateful you're here. If anything feels unclear, just reply to this email — a human on the Watchfront team will help.</p>
+  <p style="margin:28px 0">
+    <a href="{app}/login" style="background:#4b2440;color:#faf6ed;padding:12px 22px;border-radius:999px;text-decoration:none;font-family:system-ui,sans-serif;font-size:14px">
+      Sign in to Watchfront
+    </a>
+  </p>
+  <p style="color:#5e3a54">With gratitude,<br/>The Watchfront team</p>
+</div>
+"""
+    status, err = send_email([email], subject, text, html=html)
+    if status != "sent":
+        log.warning("welcome email to %s: %s %s", email, status, err)
+    else:
+        log.info("welcome email sent to %s", email)
+    return status, err
+
+
+
 def _post(url: str, payload: dict) -> tuple[str, str | None]:
     try:
         r = requests.post(url, json=payload, timeout=10)
@@ -134,15 +182,15 @@ def dispatch(ws: dict, event: str, subject: str, body: str, *, severity: str = "
     if event != "escalation" and severity != "critical" and _in_quiet_hours(s):
         _record(ws["_id"], "quiet_hours", "suppressed", subject, "skipped", "quiet hours", incident_id, event)
         return
-    full_body = body + (f"\n\nOpen in SiteGuard: {link}" if link else "")
+    full_body = body + (f"\n\nOpen in Watchfront: {link}" if link else "")
     emails = extra_emails if extra_emails is not None else s["emails"]
     if not emails:
         owner_emails = [m["email"] for m in get_db().members.find({"workspace_id": ws["_id"], "role": "owner", "status": "active"})]
         emails = owner_emails
-    status, err = send_email(emails, f"[SiteGuard] {subject}", full_body)
+    status, err = send_email(emails, f"[Watchfront] {subject}", full_body)
     _record(ws["_id"], "email", ", ".join(emails), subject, status, err, incident_id, event)
 
-    text = f"*{subject}*\n{body}" + (f"\n<{link}|Open in SiteGuard>" if link else "")
+    text = f"*{subject}*\n{body}" + (f"\n<{link}|Open in Watchfront>" if link else "")
     if s.get("slack_webhook") and feature(ws, "slack"):
         status, err = _post(s["slack_webhook"], _slack_blocks(subject, body, severity=severity, event=event, link=link))
         _record(ws["_id"], "slack", "slack webhook", subject, status, err, incident_id, event)

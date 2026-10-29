@@ -178,7 +178,7 @@ def preview(ws: dict, url: str) -> dict:
     try:
         with sync_playwright() as p:
             browser = _launch(p)
-            ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 SiteGuardBot/1.0")
+            ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 WatchfrontBot/1.0")
             page = ctx.new_page()
             page.route("**/*", _Guard(urlparse(url).hostname, [], False))
             page.goto(url, wait_until="load", timeout=30000)

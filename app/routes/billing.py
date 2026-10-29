@@ -1,8 +1,13 @@
-"""Cashfree checkout + webhook for plan upgrades."""
+"""Cashfree hosted checkout + webhook for plan upgrades.
+
+Flow (Cashfree web checkout docs):
+1. Server creates order → payment_session_id
+2. Client opens Cashfree.js checkout
+3. Server confirms via webhook + GET /orders + GET /orders/{id}/payments
+"""
 from __future__ import annotations
 
 import logging
-import re
 
 from flask import Blueprint, g, jsonify, request
 
@@ -16,7 +21,7 @@ from ..utils import ApiError, now, ser, token
 from . import body
 
 bp = Blueprint("billing", __name__, url_prefix="/api/billing")
-log = logging.getLogger("siteguard.billing")
+log = logging.getLogger("watchfront.billing")
 
 PAID_PLANS = {"starter", "agency", "agency_pro"}
 
@@ -54,12 +59,43 @@ def _apply_plan(ws_id, plan: str, *, payment: dict | None = None) -> dict:
 @bp.get("/config")
 @require()
 def billing_config():
+    methods = cashfree.payment_methods() if cashfree.enabled() else ""
     return jsonify({
         "enabled": cashfree.enabled(),
         "mode": cashfree.mode() if cashfree.enabled() else None,
         "currency": "INR",
         "provider": "cashfree",
+        "payment_methods": methods,
+        "payment_methods_labels": _method_labels(methods),
+        "webhook_url": f"{Config.PUBLIC_API_URL}/api/billing/webhook",
+        "return_url_template": f"{Config.APP_URL}/app/settings?tab=billing&order_id={{order_id}}",
+        "app_url": Config.APP_URL,
+        "requires_phone": True,
     })
+
+
+def _method_labels(csv: str) -> list[dict]:
+    labels = {
+        "cc": "Credit card",
+        "dc": "Debit card",
+        "upi": "UPI",
+        "nb": "Netbanking",
+        "app": "Wallets (Paytm, PhonePe, Amazon Pay…)",
+        "paylater": "Pay later",
+        "ccc": "Corporate credit card",
+        "ppc": "Prepaid card",
+        "emi": "EMI",
+        "cardlessemi": "Cardless EMI",
+        "ccemi": "Credit card EMI",
+        "dcemi": "Debit card EMI",
+        "banktransfer": "Bank transfer",
+        "applepay": "Apple Pay",
+        "paypal": "PayPal",
+    }
+    out = []
+    for m in [p.strip() for p in (csv or "").split(",") if p.strip()]:
+        out.append({"id": m, "label": labels.get(m, m.upper())})
+    return out
 
 
 @bp.post("/checkout")
@@ -84,25 +120,45 @@ def checkout():
         )
 
     user = db.users.find_one({"_id": g.user_id}) or {}
-    order_id = f"sg_{str(g.ws_id)[-8:]}_{plan}_{token('', 8)}"
-    phone = re.sub(r"\D", "", str(data.get("phone") or user.get("phone") or "9999999999"))[-10:]
-    if len(phone) < 10:
-        phone = "9999999999"
+    phone_raw = data.get("phone") or user.get("phone") or ""
+    phone = cashfree.normalize_phone(phone_raw)
+    if len(phone) != 10 or phone[0] not in "6789":
+        raise ApiError(
+            "Enter a valid 10-digit Indian mobile number before paying (Cashfree requirement).",
+            422,
+            "invalid_phone",
+        )
 
-    return_url = f"{Config.APP_URL}/app/settings?tab=billing&order_id={order_id}"
+    # Persist phone for next checkout
+    if phone != cashfree.normalize_phone(user.get("phone")):
+        db.users.update_one({"_id": g.user_id}, {"$set": {"phone": phone}})
+
+    order_id = f"sg_{str(g.ws_id)[-8:]}_{plan}_{token('', 8)}"
+    # {order_id} placeholder is replaced by Cashfree on redirect (recommended).
+    return_url = f"{Config.APP_URL}/app/settings?tab=billing&order_id={{order_id}}"
     notify_url = f"{Config.PUBLIC_API_URL}/api/billing/webhook"
+    plan_name = PLANS[plan]["name"]
 
     cf_order = cashfree.create_order(
         order_id=order_id,
         amount_inr=amount,
         customer_id=str(g.user_id),
-        customer_email=user.get("email") or "billing@siteguard.app",
+        customer_email=user.get("email") or "billing@watchfront.in",
         customer_phone=phone,
-        customer_name=user.get("name") or user.get("email") or "SiteGuard",
+        customer_name=user.get("name") or user.get("email") or "Customer",
         return_url=return_url,
         notify_url=notify_url,
-        tags={"workspace_id": str(g.ws_id), "plan": plan},
+        order_note=f"Watchfront {plan_name} plan — monthly",
+        tags={
+            "workspace_id": str(g.ws_id),
+            "plan": plan,
+            "checkout_context": f"Watchfront {plan_name} · ₹{amount}/mo",
+        },
     )
+
+    session_id = cf_order.get("payment_session_id")
+    if not session_id:
+        raise ApiError("Cashfree did not return a payment_session_id", 502, "cashfree_error")
 
     doc = {
         "order_id": order_id,
@@ -113,7 +169,9 @@ def checkout():
         "amount_inr": amount,
         "currency": "INR",
         "status": "created",
-        "payment_session_id": cf_order.get("payment_session_id"),
+        "payment_session_id": session_id,
+        "customer_phone": phone,
+        "payment_methods": cashfree.payment_methods(),
         "raw_create": {k: cf_order.get(k) for k in ("cf_order_id", "order_id", "order_status", "payment_session_id") if k in cf_order},
         "created_at": now(),
         "updated_at": now(),
@@ -123,11 +181,12 @@ def checkout():
 
     return jsonify({
         "order_id": order_id,
-        "payment_session_id": cf_order.get("payment_session_id"),
+        "payment_session_id": session_id,
         "amount_inr": amount,
         "plan": plan,
         "mode": cashfree.mode(),
-        "return_url": return_url,
+        "return_url": return_url.replace("{order_id}", order_id),
+        "payment_methods": cashfree.payment_methods(),
     })
 
 
@@ -138,15 +197,29 @@ def order_status(order_id: str):
     local = db.billing_orders.find_one({"order_id": order_id, "workspace_id": g.ws_id})
     if not local:
         raise ApiError("Order not found", 404)
+
+    remote: dict = {}
+    payments: list = []
     try:
         remote = cashfree.get_order(order_id)
+        payments = cashfree.get_payments(order_id)
     except ApiError:
-        remote = {}
-    status = (remote.get("order_status") or local.get("status") or "").upper()
-    paid = status in ("PAID", "ACTIVE")
+        pass
+
+    paid = cashfree.order_is_paid(remote, payments) or local.get("status") == "paid"
     if paid and local.get("status") != "paid":
-        _mark_paid(local, remote)
+        payment_id = None
+        for p in payments:
+            if (p.get("payment_status") or "").upper() == "SUCCESS":
+                payment_id = p.get("cf_payment_id") or p.get("payment_id")
+                break
+        _mark_paid(local, {
+            "payment_id": payment_id,
+            "order_status": remote.get("order_status"),
+            "payments": payments,
+        })
         local = db.billing_orders.find_one({"order_id": order_id})
+
     return jsonify(ser({
         "order_id": order_id,
         "plan": local.get("plan"),
@@ -155,6 +228,10 @@ def order_status(order_id: str):
         "cf_status": remote.get("order_status"),
         "paid": local.get("status") == "paid",
         "workspace_plan": (db.workspaces.find_one({"_id": g.ws_id}) or {}).get("plan"),
+        "payment_methods_used": [
+            p.get("payment_group") or p.get("payment_method")
+            for p in payments if (p.get("payment_status") or "").upper() == "SUCCESS"
+        ],
     }))
 
 
@@ -168,7 +245,12 @@ def _mark_paid(local: dict, remote: dict | None = None) -> None:
         payment_id = remote.get("payment_id") or remote.get("cf_payment_id")
         payments = remote.get("payments")
         if not payment_id and isinstance(payments, list) and payments:
-            payment_id = payments[0].get("cf_payment_id")
+            for p in payments:
+                if (p.get("payment_status") or "").upper() == "SUCCESS":
+                    payment_id = p.get("cf_payment_id") or p.get("payment_id")
+                    break
+            if not payment_id:
+                payment_id = payments[0].get("cf_payment_id")
     db.billing_orders.update_one(
         {"_id": local["_id"], "status": {"$ne": "paid"}},
         {"$set": {"status": "paid", "paid_at": now(), "updated_at": now(), "payment_id": payment_id, "raw_paid": remote or {}}},
@@ -184,12 +266,11 @@ def _mark_paid(local: dict, remote: dict | None = None) -> None:
 
 @bp.post("/webhook")
 def webhook():
-    """Cashfree notify_url — no auth JWT; verify HMAC signature."""
+    """Cashfree notify_url + dashboard webhook — verify HMAC signature."""
     raw = request.get_data(as_text=True) or ""
     signature = request.headers.get("x-webhook-signature") or ""
     timestamp = request.headers.get("x-webhook-timestamp") or ""
     if cashfree.enabled() and not cashfree.verify_webhook_signature(signature, raw, timestamp):
-        # Some dashboard test pings omit signature — still reject unsigned in production.
         if Config.CASHFREE_ENV == "production":
             log.warning("cashfree webhook signature mismatch")
             return jsonify({"ok": False, "error": "invalid signature"}), 401
@@ -211,11 +292,19 @@ def webhook():
         return jsonify({"ok": True, "unknown_order": True})
 
     success_events = ("PAYMENT_SUCCESS", "PAYMENT_CHARGES_WEBHOOK", "ORDER_PAID")
-    paid_hint = event_type in success_events or (payment.get("payment_status") or "").upper() == "SUCCESS" \
+    paid_hint = (
+        event_type in success_events
+        or (payment.get("payment_status") or "").upper() == "SUCCESS"
         or (order.get("order_status") or "").upper() in ("PAID", "ACTIVE")
+    )
 
     if paid_hint:
-        _mark_paid(local, {"payment_id": payment.get("cf_payment_id"), "order_status": order.get("order_status"), "event": event_type})
+        _mark_paid(local, {
+            "payment_id": payment.get("cf_payment_id"),
+            "order_status": order.get("order_status"),
+            "event": event_type,
+            "payment_group": payment.get("payment_group") or payment.get("payment_method"),
+        })
     else:
         db.billing_orders.update_one({"_id": local["_id"]}, {"$set": {
             "updated_at": now(), "last_webhook_type": event_type,

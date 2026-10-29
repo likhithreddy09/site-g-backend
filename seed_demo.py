@@ -8,7 +8,7 @@ import time
 import requests
 
 API = "http://localhost:5050"
-EMAIL = sys.argv[1] if len(sys.argv) > 1 else "demo@siteguard.dev"
+EMAIL = sys.argv[1] if len(sys.argv) > 1 else "demo@watchfront.in"
 PASSWORD = sys.argv[2] if len(sys.argv) > 2 else "demo12345"
 
 s = requests.Session()

@@ -122,7 +122,7 @@ def run(ws: dict, site: dict, user_email: str, urls: list[str] | None = None) ->
             raise ValueError(reason)
         with sync_playwright() as p:
             browser = _launch(p)
-            ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 (Macintosh) Chrome/124 SiteGuardBot/1.0 (re-check)")
+            ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 (Macintosh) Chrome/124 WatchfrontBot/1.0 (re-check)")
             queue = targets or [start]
             i = 0
             while i < len(queue) and len(pages) < MAX_PAGES and time.time() - t0 < BUDGET_SEC:
@@ -134,7 +134,7 @@ def run(ws: dict, site: dict, user_email: str, urls: list[str] | None = None) ->
                 page.close()
                 for pr in problems:
                     grp = record_error(ws, site, kind=pr["kind"], message=pr["message"], stack=pr.get("stack", ""), source=pr.get("source", ""),
-                                       api=pr.get("api"), page=url, browser="Chrome", os_="SiteGuard re-check", device="Desktop", origin="recheck")
+                                       api=pr.get("api"), page=url, browser="Chrome", os_="Watchfront re-check", device="Desktop", origin="recheck")
                     found.append({"group_id": grp["_id"], "fingerprint": grp["fingerprint"], "kind": pr["kind"], "message": pr["message"], "page": url,
                                   "new": grp.get("count", 1) <= 1})
                 info["problems"] = len(problems)

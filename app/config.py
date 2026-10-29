@@ -30,7 +30,7 @@ class Config:
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER = os.getenv("SMTP_USER", "")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-    SMTP_FROM = os.getenv("SMTP_FROM", "SiteGuard <alerts@siteguard.local>")
+    SMTP_FROM = os.getenv("SMTP_FROM", "Watchfront <alerts@watchfront.in>")
     SMTP_TLS = _bool("SMTP_TLS", True)
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -45,7 +45,10 @@ class Config:
     STORAGE_DIR = os.getenv("STORAGE_DIR", os.path.join(BASE_DIR, "storage"))
 
     # Cashfree PG (never commit real keys — set via env / Railway)
+    # Docs: https://www.cashfree.com/docs/payments/online/web/redirect
     CASHFREE_APP_ID = os.getenv("CASHFREE_APP_ID", "").strip()
     CASHFREE_SECRET_KEY = os.getenv("CASHFREE_SECRET_KEY", "").strip()
     CASHFREE_ENV = os.getenv("CASHFREE_ENV", "production").strip().lower()  # sandbox | production
     CASHFREE_API_VERSION = os.getenv("CASHFREE_API_VERSION", "2023-08-01").strip()
+    # Comma-separated: cc,dc,upi,nb,app,paylater,ccc,ppc,emi,... — blank = all account methods
+    CASHFREE_PAYMENT_METHODS = os.getenv("CASHFREE_PAYMENT_METHODS", "cc,dc,upi,nb,app,paylater").strip()

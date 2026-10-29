@@ -252,7 +252,7 @@ def run_discovery(discovery_id) -> None:
         _progress(discovery_id, phase="crawl", pages_done=0, endpoints_found=0, message="Opening your site…")
         with sync_playwright() as p:
             browser = _launch(p)
-            ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 SiteGuardBot/1.0 (endpoint discovery)")
+            ctx = browser.new_context(viewport=VIEWPORT, user_agent="Mozilla/5.0 WatchfrontBot/1.0 (endpoint discovery)")
             queue, seen, groups = [start], set(), {}
             _probe_login_buttons(ctx, start, rec, logins, queue, seen)
             while queue and len(pages) < MAX_PAGES and time.time() - t0 < PAGE_BUDGET_SEC:

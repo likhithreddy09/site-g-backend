@@ -14,7 +14,7 @@ from ..security import check_host_allowed, decrypt, redact, validate_target
 from ..utils import now, parse_dt
 from . import incidents
 
-USER_AGENT = "SiteGuardBot/1.0 (+https://siteguard.app/bot; uptime monitoring)"
+USER_AGENT = "WatchfrontBot/1.0 (+https://watchfront.in/bot; uptime monitoring)"
 MAX_BODY = 2_000_000
 
 

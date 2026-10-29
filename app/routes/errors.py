@@ -24,13 +24,13 @@ from ..services import stacktrace as st
 from ..utils import ApiError, clamp_int, now, oid, ser
 
 bp = Blueprint("errors", __name__)
-log = logging.getLogger("siteguard.errors")
+log = logging.getLogger("watchfront.errors")
 
 # --------------------------------------------------------------- SDK script
 
-SDK_JS = r"""/* SiteGuard browser monitoring v2 */
+SDK_JS = r"""/* Watchfront browser monitoring v2 */
 (function(w,d){
-  if (w.__siteguard) return; w.__siteguard = 1;
+  if (w.__watchfront) return; w.__watchfront = 1;
   var s = d.currentScript || d.querySelector('script[data-site-key]'); if (!s) return;
   function opt(n, v){ var x = s.getAttribute('data-' + n); return x == null ? v : x; }
   var KEY = opt('site-key'), ENDPOINT = opt('endpoint', '__API__') + '/ingest';
@@ -180,7 +180,7 @@ def sdk():
 _buckets: dict[str, list] = defaultdict(lambda: [0.0, 0.0])
 _lock = threading.Lock()
 _RATE_PER_MIN = 600
-_BOTS = re.compile(r"bot\b|crawl|spider|slurp|HeadlessChrome|Lighthouse|PhantomJS|Prerender|SiteGuardBot|facebookexternalhit|Google-InspectionTool", re.I)
+_BOTS = re.compile(r"bot\b|crawl|spider|slurp|HeadlessChrome|Lighthouse|PhantomJS|Prerender|WatchfrontBot|facebookexternalhit|Google-InspectionTool", re.I)
 _DEFAULT_IGNORE = ("ResizeObserver loop", "Script error.")
 _EVENT_SAMPLE_FIRST = 20
 _EVENT_KEEP = 50
@@ -360,7 +360,7 @@ def write_events(ws: dict, site: dict, evs: list[dict]) -> dict:
 def record_error(ws: dict, site: dict, *, kind: str, message: str, stack: str = "", source: str = "", line=None, col=None,
                  api: dict | None = None, page: str = "", browser: str = "Other", os_: str = "Other", device: str = "Desktop",
                  release: str = "", viewport: str = "", origin: str = "visitors", session: str = "") -> dict:
-    """Record a single error synchronously and return its group. `origin` is "visitors" (SDK) or "recheck" (SiteGuard browser)."""
+    """Record a single error synchronously and return its group. `origin` is "visitors" (SDK) or "recheck" (Watchfront browser)."""
     ev = prepare(site, kind=kind, message=message, stack=stack, source=source, line=line, col=col, api=api, page=page, browser=browser,
                  os_=os_, device=device, release=release, viewport=viewport, session=session, origin=origin)
     return write_events(ws, site, [ev])[ev["fp"]]
