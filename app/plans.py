@@ -1,31 +1,32 @@
 from .db import get_db
 from .utils import ApiError, now
 
-# price = display USD; price_inr = Cashfree charge amount (INR / month)
+# India-first pricing (INR / month via Cashfree).
+# Starter 1–3 sites ₹999 · Growth 4–10 sites ₹2,499 · Agency 10+ ₹4,999 · Enterprise custom
 PLANS = {
     "free": {
-        "name": "Free", "price": 0, "price_inr": 0, "websites": 3, "min_interval_sec": 300, "history_days": 7,
+        "name": "Free", "price": 0, "price_inr": 0, "websites": 1, "min_interval_sec": 300, "history_days": 7,
         "ssl": False, "content_checks": 0, "api_monitors": 0, "browser_tests": 0, "browser_minutes": 0,
         "js_monitoring": False, "team_members": 1, "reports": False, "scheduled_reports": False,
         "white_label": False, "ai_calls": 0, "slack": False, "ingest_events": 0,
     },
     "starter": {
-        "name": "Starter", "price": 19, "price_inr": 1499, "websites": 10, "min_interval_sec": 60, "history_days": 30,
-        "ssl": True, "content_checks": 10, "api_monitors": 2, "browser_tests": 0, "browser_minutes": 0,
+        "name": "Starter", "price": 12, "price_inr": 999, "websites": 3, "min_interval_sec": 60, "history_days": 30,
+        "ssl": True, "content_checks": 10, "api_monitors": 2, "browser_tests": 0, "browser_minutes": 30,
         "js_monitoring": False, "team_members": 1, "reports": True, "scheduled_reports": False,
-        "white_label": False, "ai_calls": 0, "slack": False, "ingest_events": 0,
+        "white_label": False, "ai_calls": 20, "slack": False, "ingest_events": 10_000,
     },
     "agency": {
-        "name": "Agency", "price": 79, "price_inr": 6499, "websites": 50, "min_interval_sec": 60, "history_days": 90,
-        "ssl": True, "content_checks": 100, "api_monitors": 25, "browser_tests": 25, "browser_minutes": 300,
-        "js_monitoring": True, "team_members": 5, "reports": True, "scheduled_reports": True,
-        "white_label": False, "ai_calls": 100, "slack": True, "ingest_events": 100_000,
+        "name": "Growth", "price": 30, "price_inr": 2499, "websites": 10, "min_interval_sec": 60, "history_days": 90,
+        "ssl": True, "content_checks": 50, "api_monitors": 10, "browser_tests": 10, "browser_minutes": 120,
+        "js_monitoring": True, "team_members": 3, "reports": True, "scheduled_reports": True,
+        "white_label": False, "ai_calls": 50, "slack": True, "ingest_events": 50_000,
     },
     "agency_pro": {
-        "name": "Agency Pro", "price": 199, "price_inr": 16499, "websites": 200, "min_interval_sec": 30, "history_days": 365,
-        "ssl": True, "content_checks": 500, "api_monitors": 100, "browser_tests": 100, "browser_minutes": 1500,
-        "js_monitoring": True, "team_members": 20, "reports": True, "scheduled_reports": True,
-        "white_label": True, "ai_calls": 500, "slack": True, "ingest_events": 1_000_000,
+        "name": "Agency", "price": 60, "price_inr": 4999, "websites": 50, "min_interval_sec": 60, "history_days": 180,
+        "ssl": True, "content_checks": 200, "api_monitors": 40, "browser_tests": 40, "browser_minutes": 400,
+        "js_monitoring": True, "team_members": 10, "reports": True, "scheduled_reports": True,
+        "white_label": True, "ai_calls": 200, "slack": True, "ingest_events": 250_000,
     },
     "enterprise": {
         "name": "Enterprise", "price": None, "price_inr": None, "websites": 5000, "min_interval_sec": 30, "history_days": 730,
@@ -35,7 +36,7 @@ PLANS = {
     },
 }
 
-DEFAULT_PLAN = "agency"
+DEFAULT_PLAN = "free"
 
 
 def limits(ws: dict) -> dict:
