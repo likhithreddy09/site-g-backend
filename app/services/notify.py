@@ -97,9 +97,9 @@ def _email_shell(*, accent: str, body_html: str, preheader: str = "") -> str:
     <div style="height:4px;background:{accent}"></div>
     {body_html}
   </div>
-  <p style="max-width:560px;margin:16px auto 0;text-align:center;font-size:11px;color:#9a8793;line-height:1.5">
+  <p style="max-width:560px;margin:16px auto 0;text-align:center;font-size:10px;font-weight:400;color:#9a8793;line-height:1.5">
     Watchfront · website monitoring for agencies<br/>
-    <a href="{_esc(Config.APP_URL)}" style="color:#9b1b67;text-decoration:none">{_esc(Config.APP_URL)}</a>
+    <a href="{_esc(Config.APP_URL)}" style="color:#9b1b67;text-decoration:none;font-weight:400">{_esc(Config.APP_URL)}</a>
   </p>
 </div>
 </body></html>
@@ -159,27 +159,27 @@ def attention_html(
     rows.append(("When", now().strftime("%d %b %Y, %H:%M UTC")))
 
     kv = "".join(
-        f'<tr><td style="padding:6px 0;color:#6b5a66;font-size:12px;width:96px">{_esc(k)}</td>'
-        f'<td style="padding:6px 0;color:#1c0f18;font-size:13px;font-weight:600">{_esc(v)}</td></tr>'
+        f'<tr><td style="padding:5px 0;color:#6b5a66;font-size:11px;font-weight:400;width:88px">{_esc(k)}</td>'
+        f'<td style="padding:5px 0;color:#1c0f18;font-size:12px;font-weight:400">{_esc(v)}</td></tr>'
         for k, v in rows
     )
     cta = ""
     if link:
         cta = (
-            f'<a href="{_esc(link)}" style="display:inline-block;margin-top:18px;background:#4b2440;'
-            f'color:#faf6ed;text-decoration:none;padding:12px 20px;border-radius:999px;font-size:14px;'
-            f'font-weight:600">Open in Watchfront</a>'
+            f'<a href="{_esc(link)}" style="display:inline-block;margin-top:16px;background:#4b2440;'
+            f'color:#faf6ed;text-decoration:none;padding:10px 18px;border-radius:999px;font-size:13px;'
+            f'font-weight:500">Open in Watchfront</a>'
         )
     gif = email_asset("alert.gif")
     inner = f"""\
 <img src="{_esc(gif)}" width="560" alt="Needs attention" style="display:block;width:100%;max-width:560px;height:auto;border:0"/>
-<div style="padding:22px 24px 28px">
-  <div style="display:inline-block;background:{wash};color:{accent};font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;padding:4px 10px;border-radius:999px">Needs attention</div>
-  <h1 style="margin:14px 0 0;font-size:20px;line-height:1.3;color:#1c0f18">{_esc(title)}</h1>
-  <p style="margin:10px 0 0;font-size:14px;line-height:1.55;color:#5e3a54">{_esc(body)}</p>
-  <table style="width:100%;margin-top:18px;border-collapse:collapse">{kv}</table>
+<div style="padding:20px 22px 26px">
+  <div style="display:inline-block;background:{wash};color:{accent};font-size:10px;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;padding:3px 9px;border-radius:999px">Needs attention</div>
+  <h1 style="margin:12px 0 0;font-size:17px;line-height:1.35;color:#1c0f18;font-weight:500">{_esc(title)}</h1>
+  <p style="margin:8px 0 0;font-size:13px;line-height:1.55;font-weight:400;color:#5e3a54">{_esc(body)}</p>
+  <table style="width:100%;margin-top:14px;border-collapse:collapse">{kv}</table>
   {cta}
-  <p style="margin:20px 0 0;font-size:11px;color:#9a8793">Reply to this email if you need a hand.</p>
+  <p style="margin:16px 0 0;font-size:10px;font-weight:400;color:#9a8793">Reply to this email if you need a hand.</p>
 </div>
 """
     return _email_shell(accent=accent, body_html=inner, preheader=f"{severity.upper()}: {title}")
@@ -326,12 +326,12 @@ def send_welcome_email(user: dict) -> tuple[str, str | None]:
     ]
     steps_html = "".join(
         f"""<tr>
-          <td style="padding:10px 0;vertical-align:top;width:36px">
-            <div style="width:28px;height:28px;border-radius:999px;background:#f8e8f1;color:#9b1b67;font-weight:700;font-size:13px;line-height:28px;text-align:center">{n}</div>
+          <td style="padding:8px 0;vertical-align:top;width:32px">
+            <div style="width:24px;height:24px;border-radius:999px;background:#f8e8f1;color:#9b1b67;font-weight:500;font-size:11px;line-height:24px;text-align:center">{n}</div>
           </td>
-          <td style="padding:10px 0 10px 8px;vertical-align:top">
-            <div style="font-size:14px;font-weight:600;color:#1c0f18">{_esc(title)}</div>
-            <div style="font-size:13px;color:#5e3a54;margin-top:2px">{_esc(body)}</div>
+          <td style="padding:8px 0 8px 8px;vertical-align:top">
+            <div style="font-size:13px;font-weight:500;color:#1c0f18">{_esc(title)}</div>
+            <div style="font-size:12px;font-weight:400;color:#5e3a54;margin-top:2px">{_esc(body)}</div>
           </td>
         </tr>"""
         for n, title, body in steps
@@ -341,35 +341,35 @@ def send_welcome_email(user: dict) -> tuple[str, str | None]:
   <img src="{_esc(gif)}" width="560" alt="Watchfront — know before your clients do"
        style="display:block;width:100%;max-width:560px;height:auto;border:0"/>
 </a>
-<div style="padding:26px 28px 32px">
-  <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#9b1b67">You're in</p>
-  <h1 style="margin:10px 0 0;font-size:26px;line-height:1.2;color:#1c0f18;font-weight:700">
+<div style="padding:22px 24px 28px">
+  <p style="margin:0;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#9b1b67">You're in</p>
+  <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3;color:#1c0f18;font-weight:500">
     Hi {_esc(name)} — your monitoring desk is ready.
   </h1>
-  <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#5e3a54">
+  <p style="margin:12px 0 0;font-size:13px;line-height:1.55;font-weight:400;color:#5e3a54">
     Built for agencies that manage other people's websites. Add sites, get evidence-backed alerts,
     and look sharp when something breaks — before the client Slack message arrives.
   </p>
-  <p style="margin:18px 0 0">
-    <a href="{_esc(app)}/app" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:13px 24px;border-radius:999px;text-decoration:none;font-size:14px;font-weight:600">
+  <p style="margin:16px 0 0">
+    <a href="{_esc(app)}/app" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:10px 18px;border-radius:999px;text-decoration:none;font-size:13px;font-weight:500">
       Open your dashboard →
     </a>
   </p>
-  <p style="margin:28px 0 8px;font-size:13px;font-weight:700;color:#1c0f18">Your first 10 minutes</p>
+  <p style="margin:22px 0 6px;font-size:12px;font-weight:500;color:#1c0f18">Your first 10 minutes</p>
   <table style="width:100%;border-collapse:collapse">{steps_html}</table>
-  <div style="margin-top:22px;padding:16px 18px;border-radius:16px;background:#faf6ed;border:1px solid rgba(75,36,64,0.08)">
-    <div style="font-size:13px;font-weight:700;color:#1c0f18">24-hour free trial</div>
-    <div style="margin-top:4px;font-size:13px;line-height:1.5;color:#5e3a54">
+  <div style="margin-top:18px;padding:14px 16px;border-radius:14px;background:#faf6ed;border:1px solid rgba(75,36,64,0.08)">
+    <div style="font-size:12px;font-weight:500;color:#1c0f18">24-hour free trial</div>
+    <div style="margin-top:3px;font-size:12px;line-height:1.5;font-weight:400;color:#5e3a54">
       Full Growth features today. If it earns its place, unlock a plan for another 30 days of access.
       No card required to start.
     </div>
   </div>
-  <p style="margin:22px 0 0;font-size:14px;line-height:1.55;color:#5e3a54">
+  <p style="margin:18px 0 0;font-size:12px;line-height:1.55;font-weight:400;color:#5e3a54">
     Questions, agency pricing, or 10+ sites?
-    <a href="{_esc(app)}/contact#book" style="color:#9b1b67;font-weight:600">Book a call</a>
+    <a href="{_esc(app)}/contact#book" style="color:#9b1b67;font-weight:500">Book a call</a>
     — a human replies.
   </p>
-  <p style="margin:26px 0 0;font-size:14px;color:#1c0f18">
+  <p style="margin:20px 0 0;font-size:12px;font-weight:400;color:#1c0f18">
     Glad you're here,<br/>
     <span style="color:#5e3a54">The Watchfront team</span>
   </p>
@@ -412,22 +412,22 @@ def send_invite_email(
     inner = f"""\
 <img src="{_esc(gif)}" width="560" alt="You're invited to Watchfront"
      style="display:block;width:100%;max-width:560px;height:auto;border:0"/>
-<div style="padding:26px 28px 32px">
-  <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#9b1b67">Team invite</p>
-  <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;color:#1c0f18;font-weight:700">
+<div style="padding:22px 24px 28px">
+  <p style="margin:0;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#9b1b67">Team invite</p>
+  <h1 style="margin:8px 0 0;font-size:18px;line-height:1.3;color:#1c0f18;font-weight:500">
     {_esc(inviter_name)} wants you on {_esc(workspace_name)}.
   </h1>
-  <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#5e3a54">
-    You've been invited as <strong style="color:#1c0f18">{_esc(role_label)}</strong>.
+  <p style="margin:12px 0 0;font-size:13px;line-height:1.55;font-weight:400;color:#5e3a54">
+    You've been invited as <span style="color:#1c0f18">{_esc(role_label)}</span>.
     Join the desk, see client sites in one place, and catch issues before Slack blows up.
   </p>
-  <p style="margin:20px 0 0">
-    <a href="{_esc(cta_url)}" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:13px 24px;border-radius:999px;text-decoration:none;font-size:14px;font-weight:600">
+  <p style="margin:16px 0 0">
+    <a href="{_esc(cta_url)}" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:10px 18px;border-radius:999px;text-decoration:none;font-size:13px;font-weight:500">
       {_esc(cta_label)}
     </a>
   </p>
-  <p style="margin:22px 0 0;font-size:13px;line-height:1.5;color:#9a8793">
-    Use <strong style="color:#5e3a54">{_esc(to_email)}</strong> — the invite is tied to this address.
+  <p style="margin:18px 0 0;font-size:12px;line-height:1.5;font-weight:400;color:#9a8793">
+    Use <span style="color:#5e3a54">{_esc(to_email)}</span> — the invite is tied to this address.
   </p>
 </div>
 """
@@ -444,38 +444,38 @@ def book_call_html(*, name: str, topic: str, slot: str, note: str = "") -> str:
     app = Config.APP_URL.rstrip("/")
     gif = email_asset("welcome.gif")
     note_block = (
-        f'<p style="margin:12px 0 0;font-size:14px;color:#5e3a54"><strong style="color:#1c0f18">Note:</strong> {_esc(note)}</p>'
+        f'<p style="margin:10px 0 0;font-size:12px;font-weight:400;color:#5e3a54"><span style="color:#1c0f18">Note:</span> {_esc(note)}</p>'
         if note else ""
     )
     inner = f"""\
 <img src="{_esc(gif)}" width="560" alt="Call confirmed"
      style="display:block;width:100%;max-width:560px;height:auto;border:0"/>
-<div style="padding:26px 28px 32px">
-  <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#9b1b67">You're booked</p>
-  <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;color:#1c0f18;font-weight:700">
+<div style="padding:22px 24px 28px">
+  <p style="margin:0;font-size:10px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:#9b1b67">You're booked</p>
+  <h1 style="margin:8px 0 0;font-size:18px;line-height:1.3;color:#1c0f18;font-weight:500">
     Hi {_esc(name)} — talk soon.
   </h1>
-  <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#5e3a54">
+  <p style="margin:12px 0 0;font-size:13px;line-height:1.55;font-weight:400;color:#5e3a54">
     Thanks for booking a call with Watchfront. We'll cover your portfolio, alert setup, and what Growth looks like for an agency desk.
   </p>
-  <table style="width:100%;margin-top:18px;border-collapse:collapse;background:#faf6ed;border-radius:14px">
-    <tr><td style="padding:14px 16px">
-      <div style="font-size:12px;color:#9a8793;text-transform:uppercase;letter-spacing:0.06em;font-weight:700">When</div>
-      <div style="margin-top:4px;font-size:16px;font-weight:700;color:#1c0f18">{_esc(slot)}</div>
-      <div style="margin-top:12px;font-size:12px;color:#9a8793;text-transform:uppercase;letter-spacing:0.06em;font-weight:700">Topic</div>
-      <div style="margin-top:4px;font-size:14px;color:#5e3a54">{_esc(topic)}</div>
+  <table style="width:100%;margin-top:14px;border-collapse:collapse;background:#faf6ed;border-radius:14px">
+    <tr><td style="padding:12px 14px">
+      <div style="font-size:10px;color:#9a8793;text-transform:uppercase;letter-spacing:0.06em;font-weight:500">When</div>
+      <div style="margin-top:3px;font-size:14px;font-weight:500;color:#1c0f18">{_esc(slot)}</div>
+      <div style="margin-top:10px;font-size:10px;color:#9a8793;text-transform:uppercase;letter-spacing:0.06em;font-weight:500">Topic</div>
+      <div style="margin-top:3px;font-size:12px;font-weight:400;color:#5e3a54">{_esc(topic)}</div>
       {note_block}
     </td></tr>
   </table>
-  <p style="margin:20px 0 0;font-size:14px;line-height:1.55;color:#5e3a54">
+  <p style="margin:16px 0 0;font-size:12px;line-height:1.55;font-weight:400;color:#5e3a54">
     Need to reschedule? Just reply to this email — a human reads it.
   </p>
-  <p style="margin:18px 0 0">
-    <a href="{_esc(app)}" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:12px 20px;border-radius:999px;text-decoration:none;font-size:14px;font-weight:600">
+  <p style="margin:14px 0 0">
+    <a href="{_esc(app)}" style="display:inline-block;background:#4b2440;color:#faf6ed;padding:10px 18px;border-radius:999px;text-decoration:none;font-size:13px;font-weight:500">
       Explore Watchfront →
     </a>
   </p>
-  <p style="margin:26px 0 0;font-size:14px;color:#1c0f18">
+  <p style="margin:20px 0 0;font-size:12px;font-weight:400;color:#1c0f18">
     Looking forward to it,<br/>
     <span style="color:#5e3a54">The Watchfront team</span>
   </p>
