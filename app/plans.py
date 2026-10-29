@@ -6,8 +6,10 @@ from .utils import ApiError, aware, now
 # India-first pricing (INR / month via Cashfree).
 # Starter 1–3 sites ₹999 · Growth 4–10 sites ₹2,499 · Agency 10+ ₹4,999 · Enterprise custom
 # New workspaces get a 24h trial on the Growth plan; after that the dashboard locks until they pay.
+# Each successful Cashfree payment unlocks the chosen plan for BILLING_PERIOD_DAYS; then locks again until renewed.
 TRIAL_HOURS = 24
 TRIAL_PLAN = "agency"  # Growth — full product experience during trial
+BILLING_PERIOD_DAYS = 30
 PAID_PLANS = {"starter", "agency", "agency_pro", "enterprise"}
 
 PLANS = {
@@ -50,61 +52,120 @@ def trial_ends_at(ws: dict):
     return aware(ws.get("trial_ends_at"))
 
 
-def access(ws: dict) -> dict:
-    """Trial / lock state for API + UI.
-
-    - trial_active: within 24h window — full Growth limits
-    - locked: trial ended, no paid plan — read-only dashboard
-    - open: paid (or legacy workspace without a trial_ends_at)
-    """
+def paid_until(ws: dict):
+    """Subscription access end. Infers from last payment for older workspaces."""
+    until = aware(ws.get("paid_until"))
+    if until:
+        return until
     plan = ws.get("plan") or DEFAULT_PLAN
-    ends = trial_ends_at(ws)
-    paid = plan in PAID_PLANS and not ws.get("trial")
-    if paid:
-        return {
-            "status": "open",
-            "trial": False,
-            "trial_active": False,
-            "locked": False,
-            "trial_ends_at": ends.isoformat() if ends else None,
-            "seconds_left": 0,
-            "trial_hours": TRIAL_HOURS,
-            "effective_plan": plan,
-        }
-    if ends:
-        left = int((ends - now()).total_seconds())
-        if left > 0:
-            return {
-                "status": "trial_active",
-                "trial": True,
-                "trial_active": True,
-                "locked": False,
-                "trial_ends_at": ends.isoformat(),
-                "seconds_left": left,
-                "trial_hours": TRIAL_HOURS,
-                "effective_plan": TRIAL_PLAN,
-            }
-        return {
-            "status": "locked",
-            "trial": True,
-            "trial_active": False,
-            "locked": True,
-            "trial_ends_at": ends.isoformat(),
-            "seconds_left": 0,
-            "trial_hours": TRIAL_HOURS,
-            "effective_plan": "free",
-        }
-    # Legacy workspaces (no trial_ends_at) stay open
-    return {
+    if plan not in PAID_PLANS or ws.get("trial"):
+        return None
+    last = aware((ws.get("billing") or {}).get("last_paid_at")) or aware(ws.get("plan_changed_at"))
+    if last:
+        return last + timedelta(days=BILLING_PERIOD_DAYS)
+    return None
+
+
+def _access_base(**kwargs) -> dict:
+    base = {
         "status": "open",
-        "trial": bool(ws.get("trial")),
+        "trial": False,
         "trial_active": False,
+        "billing_active": False,
         "locked": False,
+        "reason": None,
         "trial_ends_at": None,
+        "paid_until": None,
         "seconds_left": 0,
         "trial_hours": TRIAL_HOURS,
-        "effective_plan": plan,
+        "billing_period_days": BILLING_PERIOD_DAYS,
+        "effective_plan": DEFAULT_PLAN,
+        "subscribed_plan": None,
     }
+    base.update(kwargs)
+    return base
+
+
+def access(ws: dict) -> dict:
+    """Trial / subscription lock state for API + UI.
+
+    - trial_active: within 24h window — full Growth limits
+    - billing_active: paid and paid_until in the future — plan limits
+    - locked (trial_ended | subscription_ended): dashboard view-only until they pay
+    - open: legacy / free without trial window
+    """
+    plan = ws.get("plan") or DEFAULT_PLAN
+    trial_end = trial_ends_at(ws)
+    until = paid_until(ws)
+
+    # Enterprise stays open unless explicitly trial-locked
+    if plan == "enterprise" and not ws.get("trial"):
+        return _access_base(
+            status="open",
+            effective_plan="enterprise",
+            subscribed_plan="enterprise",
+            paid_until=until.isoformat() if until else None,
+            billing_active=True,
+        )
+
+    # Active paid period
+    if until and until > now() and plan in PAID_PLANS and not ws.get("trial"):
+        left = int((until - now()).total_seconds())
+        return _access_base(
+            status="billing_active",
+            billing_active=True,
+            paid_until=until.isoformat(),
+            seconds_left=left,
+            effective_plan=plan,
+            subscribed_plan=plan,
+        )
+
+    # Paid plan whose 30-day window expired (or never renewed)
+    if plan in PAID_PLANS and not ws.get("trial") and until and until <= now():
+        return _access_base(
+            status="locked",
+            locked=True,
+            reason="subscription_ended",
+            paid_until=until.isoformat(),
+            effective_plan="free",
+            subscribed_plan=plan,
+        )
+
+    # Still on a paid plan flag but no paid_until at all → legacy grandfather
+    if plan in PAID_PLANS and not ws.get("trial") and until is None:
+        return _access_base(
+            status="open",
+            billing_active=True,
+            effective_plan=plan,
+            subscribed_plan=plan,
+        )
+
+    # Trial window
+    if trial_end:
+        left = int((trial_end - now()).total_seconds())
+        if left > 0:
+            return _access_base(
+                status="trial_active",
+                trial=True,
+                trial_active=True,
+                trial_ends_at=trial_end.isoformat(),
+                seconds_left=left,
+                effective_plan=TRIAL_PLAN,
+            )
+        return _access_base(
+            status="locked",
+            trial=True,
+            locked=True,
+            reason="trial_ended",
+            trial_ends_at=trial_end.isoformat(),
+            effective_plan="free",
+        )
+
+    return _access_base(
+        status="open",
+        trial=bool(ws.get("trial")),
+        effective_plan=plan,
+    )
 
 
 def is_locked(ws: dict) -> bool:
@@ -112,12 +173,30 @@ def is_locked(ws: dict) -> bool:
 
 
 def require_unlocked(ws: dict):
-    if is_locked(ws):
+    acc = access(ws)
+    if not acc["locked"]:
+        return
+    if acc.get("reason") == "subscription_ended":
         raise ApiError(
-            "Your 24-hour free trial has ended. Choose a plan to unlock monitoring.",
+            "Your monthly plan access has ended. Renew payment to unlock monitoring for another 30 days.",
             402,
-            "trial_locked",
+            "subscription_locked",
         )
+    raise ApiError(
+        "Your 24-hour free trial has ended. Choose a plan to unlock monitoring.",
+        402,
+        "trial_locked",
+    )
+
+
+def extend_paid_until(ws: dict | None = None, *, from_dt=None):
+    """Next paid_until after a successful payment (stacks remaining days if renewing early)."""
+    base = from_dt or now()
+    if ws:
+        prev = paid_until(ws)
+        if prev and prev > base:
+            base = prev
+    return base + timedelta(days=BILLING_PERIOD_DAYS)
 
 
 def effective_plan_id(ws: dict) -> str:

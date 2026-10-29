@@ -24,8 +24,12 @@ def _ws_payload(ws: dict) -> dict:
     out["access"] = acc
     out["locked"] = acc["locked"]
     out["trial_active"] = acc["trial_active"]
+    out["billing_active"] = acc.get("billing_active")
     out["trial_ends_at"] = acc["trial_ends_at"]
+    out["paid_until"] = acc.get("paid_until")
     out["trial_seconds_left"] = acc["seconds_left"]
+    out["access_seconds_left"] = acc["seconds_left"]
+    out["lock_reason"] = acc.get("reason")
     return out
 
 
@@ -230,10 +234,14 @@ def change_plan():
     sites = db.websites.count_documents({"workspace_id": g.ws_id})
     if sites > new_limits["websites"]:
         raise ApiError(f"You have {sites} websites; the {new_limits['name']} plan allows {new_limits['websites']}. Remove some first.", 409)
-    db.workspaces.update_one(
-        {"_id": g.ws_id},
-        {"$set": {"plan": plan, "trial": False, "trial_ends_at": None, "plan_changed_at": now()}},
-    )
+    # Free downgrade clears paid window; paid self-serve without Cashfree still gets 30 days.
+    from ..plans import extend_paid_until
+    upd = {"plan": plan, "trial": False, "trial_ends_at": None, "plan_changed_at": now()}
+    if plan == "free":
+        upd["paid_until"] = None
+    elif (PLANS[plan].get("price_inr") or 0) > 0:
+        upd["paid_until"] = extend_paid_until(g.ws)
+    db.workspaces.update_one({"_id": g.ws_id}, {"$set": upd})
     db.websites.update_many({"workspace_id": g.ws_id, "interval_sec": {"$lt": new_limits["min_interval_sec"]}},
                             {"$set": {"interval_sec": new_limits["min_interval_sec"]}})
     audit("plan.changed", "workspace", g.ws_id, {"from": g.ws.get("plan"), "to": plan})

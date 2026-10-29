@@ -14,7 +14,7 @@ from flask import Blueprint, g, jsonify, request
 from ..audit import audit
 from ..config import Config
 from ..db import get_db
-from ..plans import PLANS
+from ..plans import BILLING_PERIOD_DAYS, PLANS, extend_paid_until
 from ..security import require
 from ..services import cashfree
 from ..utils import ApiError, now, ser, token
@@ -35,20 +35,25 @@ def _apply_plan(ws_id, plan: str, *, payment: dict | None = None) -> dict:
             f"You have {sites} websites; the {new_limits['name']} plan allows {new_limits['websites']}. Remove some first.",
             409,
         )
+    ws = db.workspaces.find_one({"_id": ws_id}) or {}
+    until = extend_paid_until(ws)
     upd = {
         "plan": plan,
         "trial": False,
         "trial_ends_at": None,
+        "paid_until": until,
         "plan_changed_at": now(),
     }
     if payment:
-        prev = (db.workspaces.find_one({"_id": ws_id}, {"billing": 1}) or {}).get("billing") or {}
+        prev = (ws.get("billing") or {})
         upd["billing"] = {
             **prev,
             "provider": "cashfree",
             "last_order_id": payment.get("order_id"),
             "last_payment_id": payment.get("payment_id"),
             "last_paid_at": now(),
+            "paid_until": until,
+            "period_days": BILLING_PERIOD_DAYS,
             "plan": plan,
             "amount_inr": payment.get("amount_inr"),
             "status": "active",
