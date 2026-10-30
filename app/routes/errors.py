@@ -150,6 +150,16 @@ SDK_JS = r"""/* Watchfront browser monitoring v2 */
       return send.apply(this, arguments);
     };
   }
+
+  /* Tell Watchfront the script is live (once per session) so the dashboard can confirm install. */
+  try {
+    var helloKey = 'sg_hello_' + KEY;
+    if (!sessionStorage.getItem(helloKey) && fetch0) {
+      sessionStorage.setItem(helloKey, '1');
+      fetch0.call(w, ENDPOINT, {method: 'POST', body: JSON.stringify({v: 2, site_key: KEY, hello: 1, session: SID, ua: nav.userAgent}),
+        keepalive: true, mode: 'cors', headers: {'Content-Type': 'text/plain'}}).catch(function(){});
+    }
+  } catch(e){}
 })(window, document);"""
 
 _SDK_CACHE: dict[str, tuple[bytes, bytes, str]] = {}
@@ -462,6 +472,19 @@ def ingest():
     ua = str(data.get("ua") or request.headers.get("User-Agent") or "")
     if not rum.get("enabled", True) or _BOTS.search(ua):
         return _cors(Response(status=202))
+
+    def _mark_script_seen():
+        t = now()
+        get_db().websites.update_one(
+            {"_id": site["_id"]},
+            {"$set": {"rum_last_seen_at": t}, "$min": {"rum_installed_at": t}},
+        )
+
+    # Lightweight hello from sdk.js on first page load in a session.
+    if data.get("hello"):
+        _mark_script_seen()
+        return _cors(Response(status=202))
+
     raw = data.get("events") if isinstance(data.get("events"), list) else [data]
     raw = [e for e in raw[:50] if isinstance(e, dict)]
     if not raw:
@@ -499,6 +522,7 @@ def ingest():
         if not ev["noise"]:
             items.append((ws, site, ev))
     if items:
+        _mark_script_seen()
         _enqueue(items)
     return _cors(Response(status=202))
 

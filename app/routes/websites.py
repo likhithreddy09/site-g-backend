@@ -170,11 +170,25 @@ def list_websites():
     rows = list(db.websites.find(q).sort("name", 1))
     clients = {c["_id"]: c["name"] for c in db.clients.find({"workspace_id": g.ws_id})}
     since = now() - timedelta(hours=24)
+    t = now()
     for s in rows:
         s["client_name"] = clients.get(s.get("client_id"))
         s["uptime_24h"] = _uptime(s["_id"], since)
         s["spark"] = [r.get("response_ms") for r in db.check_results.find(
             {"website_id": s["_id"], "kind": "http"}, {"response_ms": 1}).sort("at", -1).limit(24)][::-1]
+        last_seen = s.get("rum_last_seen_at")
+        fresh = False
+        if last_seen:
+            try:
+                fresh = (t - last_seen).total_seconds() < 14 * 86400
+            except TypeError:
+                fresh = False
+        s["rum_script"] = {
+            "installed": bool(s.get("rum_installed_at") or last_seen),
+            "active": fresh,
+            "installed_at": s.get("rum_installed_at"),
+            "last_seen_at": last_seen,
+        }
     return jsonify(ser(rows))
 
 
@@ -283,6 +297,24 @@ def get_website(sid):
     site["open_incidents"] = ser(list(db.incidents.find({"website_id": site["_id"], "status": {"$in": ["open", "investigating"]}}).sort("started_at", -1)))
     console_attr = ' data-console-errors="true"' if (site.get("rum") or {}).get("console_errors") else ""
     site["snippet"] = f'<script src="{Config.PUBLIC_API_URL}/sdk.js" data-site-key="{site["site_key"]}"{console_attr} async></script>'
+    # Script install status: hello/events from sdk.js set rum_installed_at / rum_last_seen_at.
+    last_seen = site.get("rum_last_seen_at")
+    installed_at = site.get("rum_installed_at")
+    stale_days = 14
+    fresh = False
+    if last_seen:
+        try:
+            age = (now() - last_seen).total_seconds()
+            fresh = age < stale_days * 86400
+        except TypeError:
+            fresh = False
+    site["rum_script"] = {
+        "installed": bool(installed_at or last_seen),
+        "active": fresh,
+        "installed_at": installed_at,
+        "last_seen_at": last_seen,
+        "stale_after_days": stale_days,
+    }
     journeys_failing = db.browser_tests.count_documents({"website_id": site["_id"], "status": "failing"})
     journeys_total = db.browser_tests.count_documents({"website_id": site["_id"]})
     apis_failing = db.api_monitors.count_documents({"website_id": site["_id"], "status": {"$in": ["down", "failing", "degraded"]}})
@@ -388,7 +420,13 @@ def check_now(sid):
 @require("admin")
 def rotate_key(sid):
     site = _get_site(sid)
-    get_db().websites.update_one({"_id": site["_id"]}, {"$set": {"site_key": token("sg_", 12)}})
+    get_db().websites.update_one(
+        {"_id": site["_id"]},
+        {
+            "$set": {"site_key": token("sg_", 12)},
+            "$unset": {"rum_installed_at": "", "rum_last_seen_at": ""},
+        },
+    )
     audit("website.key_rotated", "website", site["_id"])
     return get_website(sid)
 
