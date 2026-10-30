@@ -46,6 +46,7 @@ KIND_LABELS = {
     "browser_test": "User journey",
     "page_check": "Content / visual check",
     "visual_change": "Visual change",
+    "seo": "SEO audit",
     "escalation": "Escalation",
     "incident_resolved": "Recovered",
 }

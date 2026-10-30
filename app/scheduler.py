@@ -17,7 +17,7 @@ from pymongo import ReturnDocument
 from .config import Config
 from .db import get_db
 from .plans import limits
-from .services import artifacts, browser, checks, incidents, reports
+from .services import artifacts, browser, checks, incidents, reports, seo_audit
 from .utils import now
 
 log = logging.getLogger("watchfront.scheduler")
@@ -110,6 +110,12 @@ def dispatch() -> None:
             if not site:
                 break
             http_pool.submit("domain_check", checks.run_domain_check, site["_id"])
+        while http_pool.capacity > 0:
+            # Treat missing seo_enabled as on (existing sites); free plan sets False at create/update.
+            site = _claim("websites", "seo_next_at", lambda d: 24 * 3600, {"seo_enabled": {"$ne": False}})
+            if not site:
+                break
+            http_pool.submit("seo_audit", seo_audit.run_seo_audit, site["_id"])
         while http_pool.capacity > 0:
             mon = _claim("api_monitors", "next_check_at", _interval)
             if not mon:

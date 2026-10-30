@@ -118,6 +118,8 @@ def _website_fields(data: dict, ws: dict, existing: dict | None = None) -> dict:
         out["ssl_enabled"] = bool(data.get("ssl_enabled", True)) and bool(lim["ssl"])
     if "domain_enabled" in data or not existing:
         out["domain_enabled"] = bool(data.get("domain_enabled", True)) and bool(lim["ssl"])
+    if "seo_enabled" in data or not existing:
+        out["seo_enabled"] = bool(data.get("seo_enabled", True)) and bool(lim.get("seo_audit"))
     if "ssl_reminder_days" in data:
         out["ssl_reminder_days"] = sorted({clamp_int(x, 1, 120, 14) for x in data["ssl_reminder_days"] or [30, 14, 7, 1]}, reverse=True)
     if "domain_reminder_days" in data:
@@ -181,7 +183,7 @@ def _insert_website(data: dict, *, run_initial: bool = True) -> dict:
     fields = _website_fields(data, g.ws)
     t = now()
     doc = {"workspace_id": g.ws_id, "client_id": None, "paused": False, "status": "unknown", "consecutive_failures": 0,
-           "created_at": t, "next_check_at": t, "ssl_next_at": t, "domain_next_at": t, "site_key": token("sg_", 12),
+           "created_at": t, "next_check_at": t, "ssl_next_at": t, "domain_next_at": t, "seo_next_at": t, "site_key": token("sg_", 12),
            "ssl_reminder_days": [30, 14, 7, 1], "domain_reminder_days": [60, 30, 14, 7], "environment": "production",
            "rum": {"enabled": True, "sample_rate": 1.0, "capture_api": True, "alert_threshold": 10, "ignore_patterns": [], "release": "", "alert_new": True, "console_errors": False},
            **fields}
@@ -318,6 +320,10 @@ def get_website(sid):
         "visual_pending": visual_pending,
         "ssl_days_left": (site.get("ssl") or {}).get("days_left"),
         "domain_days_left": (site.get("domain") or {}).get("days_left"),
+        "seo_score": (site.get("seo") or {}).get("score"),
+        "seo_grade": (site.get("seo") or {}).get("grade"),
+        "seo_failed": (site.get("seo") or {}).get("failed"),
+        "seo_warned": (site.get("seo") or {}).get("warned"),
     }
     return jsonify(ser(site))
 
@@ -365,6 +371,14 @@ def check_now(sid):
         checks.run_ssl_check(site["_id"])
     elif kind == "domain":
         checks.run_domain_check(site["_id"])
+    elif kind == "seo":
+        from ..plans import require_feature
+        from ..services import seo_audit
+        require_feature(g.ws, "seo_audit", "SEO audit")
+        if not site.get("seo_enabled", True):
+            from ..utils import ApiError
+            raise ApiError("SEO audit is turned off for this website", 422)
+        seo_audit.run_seo_audit(site["_id"])
     else:
         checks.run_website_check(site["_id"])
     return get_website(sid)
