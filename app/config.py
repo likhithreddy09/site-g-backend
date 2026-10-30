@@ -36,6 +36,8 @@ class Config:
     SMTP_SSL = _bool("SMTP_SSL", str(os.getenv("SMTP_PORT", "465")).strip() == "465")
     SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "45"))
     SMTP_RETRIES = int(os.getenv("SMTP_RETRIES", "3"))
+    # Prefer Resend HTTP API when set (works from Railway; GoDaddy SMTP often times out).
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")

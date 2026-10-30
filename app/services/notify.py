@@ -1,3 +1,4 @@
+import base64
 import html as html_lib
 import logging
 import mimetypes
@@ -244,6 +245,14 @@ def _record(ws_id, channel, target, subject, status, error=None, incident_id=Non
     })
 
 
+def email_provider() -> str:
+    if Config.RESEND_API_KEY:
+        return "resend"
+    if Config.SMTP_HOST:
+        return "smtp"
+    return "none"
+
+
 def _smtp_attempts() -> list[tuple[int, bool]]:
     """Ordered (port, use_ssl) attempts. Prefer configured port, then GoDaddy-friendly fallbacks."""
     primary = (Config.SMTP_PORT, bool(Config.SMTP_SSL) or Config.SMTP_PORT == 465)
@@ -278,6 +287,70 @@ def _smtp_send(msg: EmailMessage, *, port: int, use_ssl: bool) -> None:
         s.send_message(msg)
 
 
+def _resend_send(
+    to: list[str],
+    subject: str,
+    body: str,
+    html: str | None,
+    *,
+    headers: dict | None = None,
+) -> tuple[str, str | None]:
+    """Send via Resend HTTPS API (reliable from Railway)."""
+    payload: dict = {
+        "from": Config.SMTP_FROM,
+        "to": to,
+        "subject": subject,
+        "text": body,
+    }
+    if html:
+        payload["html"] = html
+        attachments = []
+        for name in _inline_cids_from_html(html):
+            path = _EMAIL_STATIC / name
+            attachments.append(
+                {
+                    "filename": name,
+                    "content": base64.b64encode(path.read_bytes()).decode("ascii"),
+                    "content_id": name,
+                }
+            )
+        if attachments:
+            payload["attachments"] = attachments
+    if headers:
+        # Resend custom headers (skip standard ones it sets itself)
+        custom = {k: str(v) for k, v in headers.items() if v is not None and k.lower() not in {"from", "to", "subject"}}
+        if custom:
+            payload["headers"] = custom
+
+    try:
+        res = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {Config.RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        log.warning("resend request failed: %s", e)
+        return "failed", str(e)
+
+    if res.status_code in (200, 201):
+        eid = (res.json() or {}).get("id")
+        log.info("email sent via resend to=%s subject=%s id=%s", to, subject, eid)
+        return "sent", None
+
+    try:
+        detail = res.json()
+        msg = detail.get("message") or detail.get("error") or detail
+    except Exception:  # noqa: BLE001
+        msg = res.text[:300]
+    err = f"resend HTTP {res.status_code}: {msg}"
+    log.warning("email failed via resend: %s", err)
+    return "failed", err
+
+
 def send_email(
     to: list[str],
     subject: str,
@@ -289,25 +362,32 @@ def send_email(
 ) -> tuple[str, str | None]:
     if not to:
         return "skipped", "no recipients"
-    if not Config.SMTP_HOST:
+    if email_provider() == "none":
         log.info("[email:logged] to=%s subject=%s\n%s", to, subject, body)
         return "logged", None
+
+    extra_headers: dict = dict(headers or {})
+    # Help clients / rules flag urgency (and drive custom notification sounds via inbox filters).
+    sev = (severity or "").lower()
+    if sev == "critical":
+        extra_headers.setdefault("Importance", "high")
+        extra_headers.setdefault("X-Priority", "1")
+        extra_headers.setdefault("Priority", "urgent")
+    elif sev == "major":
+        extra_headers.setdefault("Importance", "high")
+        extra_headers.setdefault("X-Priority", "2")
+    if severity:
+        extra_headers.setdefault("X-Watchfront-Severity", severity)
+
+    # Prefer Resend — GoDaddy SMTP times out from Railway cloud IPs.
+    if Config.RESEND_API_KEY:
+        return _resend_send(to, subject, body, html, headers=extra_headers or None)
+
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = Config.SMTP_FROM
     msg["To"] = ", ".join(to)
-    # Help clients / rules flag urgency (and drive custom notification sounds via inbox filters).
-    sev = (severity or "").lower()
-    if sev == "critical":
-        msg["Importance"] = "high"
-        msg["X-Priority"] = "1"
-        msg["Priority"] = "urgent"
-    elif sev == "major":
-        msg["Importance"] = "high"
-        msg["X-Priority"] = "2"
-    if severity:
-        msg["X-Watchfront-Severity"] = severity
-    for k, v in (headers or {}).items():
+    for k, v in extra_headers.items():
         if v is not None:
             msg[k] = str(v)
     msg.set_content(body)

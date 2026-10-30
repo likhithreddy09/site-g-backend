@@ -73,12 +73,12 @@ def active_users():
             "recent_login_only": ser(recent_login),
             "all_users": ser(all_users),
             "as_of": ser(now()),
-            "smtp": {
-                "configured": bool(Config.SMTP_HOST),
-                "host": Config.SMTP_HOST or None,
-                "port": Config.SMTP_PORT,
-                "ssl": Config.SMTP_SSL,
-                "timeout": Config.SMTP_TIMEOUT,
+            "email": {
+                "provider": notify.email_provider(),
+                "configured": notify.email_provider() != "none",
+                "from": Config.SMTP_FROM,
+                "smtp_host": Config.SMTP_HOST or None,
+                "smtp_port": Config.SMTP_PORT,
             },
         }
     )
@@ -118,11 +118,7 @@ def test_email():
             "email": email,
             "status": status,
             "error": err,
-            "smtp": {
-                "host": Config.SMTP_HOST or None,
-                "port": Config.SMTP_PORT,
-                "ssl": Config.SMTP_SSL,
-                "timeout": Config.SMTP_TIMEOUT,
-            },
+            "provider": notify.email_provider(),
+            "from": Config.SMTP_FROM,
         }
     )

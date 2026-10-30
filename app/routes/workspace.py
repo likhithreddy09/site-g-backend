@@ -19,7 +19,7 @@ def _ws_payload(ws: dict) -> dict:
     out["usage"] = usage(ws)
     out["notifications"] = notify.settings_for(ws)
     out["role"] = g.role
-    out["smtp_configured"] = bool(Config.SMTP_HOST)
+    out["smtp_configured"] = bool(Config.RESEND_API_KEY or Config.SMTP_HOST)
     out["ai_engine"] = Config.OPENAI_MODEL if Config.OPENAI_API_KEY else "heuristic"
     out["access"] = acc
     out["locked"] = acc["locked"]
