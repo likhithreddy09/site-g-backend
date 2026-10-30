@@ -56,14 +56,21 @@ def active_users():
         ).sort("last_login_at", -1)
     )
 
-    total = db.users.count_documents({})
+    all_users = list(
+        db.users.find(
+            {},
+            {"email": 1, "name": 1, "last_seen_at": 1, "last_login_at": 1, "created_at": 1},
+        ).sort([("created_at", -1), ("_id", -1)])
+    )
+
     return jsonify(
         {
             "live_minutes": minutes,
-            "total_users": total,
+            "total_users": len(all_users),
             "live_count": len(live),
             "live_users": ser(live),
             "recent_login_only": ser(recent_login),
+            "all_users": ser(all_users),
             "as_of": ser(now()),
         }
     )
