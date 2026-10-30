@@ -15,31 +15,31 @@ PAID_PLANS = {"starter", "agency", "agency_pro", "enterprise"}
 PLANS = {
     "free": {
         "name": "Free", "price": 0, "price_inr": 0, "websites": 1, "min_interval_sec": 300, "history_days": 7,
-        "ssl": False, "seo_audit": False, "content_checks": 0, "api_monitors": 0, "browser_tests": 0, "browser_minutes": 0,
+        "ssl": False, "seo_audit": False, "seo_pages": 0, "content_checks": 0, "api_monitors": 0, "browser_tests": 0, "browser_minutes": 0,
         "js_monitoring": False, "team_members": 1, "reports": False, "scheduled_reports": False,
         "white_label": False, "ai_calls": 0, "slack": False, "ingest_events": 0,
     },
     "starter": {
         "name": "Starter", "price": 12, "price_inr": 999, "websites": 3, "min_interval_sec": 60, "history_days": 30,
-        "ssl": True, "seo_audit": True, "content_checks": 10, "api_monitors": 2, "browser_tests": 0, "browser_minutes": 30,
+        "ssl": True, "seo_audit": True, "seo_pages": 10, "content_checks": 10, "api_monitors": 2, "browser_tests": 0, "browser_minutes": 30,
         "js_monitoring": False, "team_members": 1, "reports": True, "scheduled_reports": False,
         "white_label": False, "ai_calls": 20, "slack": False, "ingest_events": 10_000,
     },
     "agency": {
         "name": "Growth", "price": 30, "price_inr": 2499, "websites": 10, "min_interval_sec": 60, "history_days": 90,
-        "ssl": True, "seo_audit": True, "content_checks": 50, "api_monitors": 10, "browser_tests": 10, "browser_minutes": 120,
+        "ssl": True, "seo_audit": True, "seo_pages": 25, "content_checks": 50, "api_monitors": 10, "browser_tests": 10, "browser_minutes": 120,
         "js_monitoring": True, "team_members": 3, "reports": True, "scheduled_reports": True,
         "white_label": False, "ai_calls": 50, "slack": True, "ingest_events": 50_000,
     },
     "agency_pro": {
         "name": "Agency", "price": 60, "price_inr": 4999, "websites": 50, "min_interval_sec": 60, "history_days": 180,
-        "ssl": True, "seo_audit": True, "content_checks": 200, "api_monitors": 40, "browser_tests": 40, "browser_minutes": 400,
+        "ssl": True, "seo_audit": True, "seo_pages": 50, "content_checks": 200, "api_monitors": 40, "browser_tests": 40, "browser_minutes": 400,
         "js_monitoring": True, "team_members": 10, "reports": True, "scheduled_reports": True,
         "white_label": True, "ai_calls": 200, "slack": True, "ingest_events": 250_000,
     },
     "enterprise": {
         "name": "Enterprise", "price": None, "price_inr": None, "websites": 5000, "min_interval_sec": 30, "history_days": 730,
-        "ssl": True, "seo_audit": True, "content_checks": 5000, "api_monitors": 2000, "browser_tests": 1000, "browser_minutes": 20000,
+        "ssl": True, "seo_audit": True, "seo_pages": 100, "content_checks": 5000, "api_monitors": 2000, "browser_tests": 1000, "browser_minutes": 20000,
         "js_monitoring": True, "team_members": 500, "reports": True, "scheduled_reports": True,
         "white_label": True, "ai_calls": 5000, "slack": True, "ingest_events": 20_000_000,
     },
