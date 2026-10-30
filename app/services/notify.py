@@ -2,6 +2,8 @@ import html as html_lib
 import logging
 import mimetypes
 import smtplib
+import ssl
+import time
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -242,6 +244,40 @@ def _record(ws_id, channel, target, subject, status, error=None, incident_id=Non
     })
 
 
+def _smtp_attempts() -> list[tuple[int, bool]]:
+    """Ordered (port, use_ssl) attempts. Prefer configured port, then GoDaddy-friendly fallbacks."""
+    primary = (Config.SMTP_PORT, bool(Config.SMTP_SSL) or Config.SMTP_PORT == 465)
+    fallbacks = [(465, True), (587, False)]
+    seen: set[tuple[int, bool]] = set()
+    out: list[tuple[int, bool]] = []
+    for item in (primary, *fallbacks):
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _smtp_send(msg: EmailMessage, *, port: int, use_ssl: bool) -> None:
+    host = Config.SMTP_HOST
+    timeout = max(10, Config.SMTP_TIMEOUT)
+    ctx = ssl.create_default_context()
+    if use_ssl:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout, context=ctx) as s:
+            s.ehlo()
+            if Config.SMTP_USER:
+                s.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+            s.send_message(msg)
+        return
+    with smtplib.SMTP(host, port, timeout=timeout) as s:
+        s.ehlo()
+        if Config.SMTP_TLS:
+            s.starttls(context=ctx)
+            s.ehlo()
+        if Config.SMTP_USER:
+            s.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+        s.send_message(msg)
+
+
 def send_email(
     to: list[str],
     subject: str,
@@ -286,17 +322,29 @@ def send_email(
             ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
             maintype, subtype = ctype.split("/", 1)
             html_part.add_related(data, maintype=maintype, subtype=subtype, cid=name)
-    try:
-        with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as s:
-            if Config.SMTP_TLS:
-                s.starttls()
-            if Config.SMTP_USER:
-                s.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
-            s.send_message(msg)
-        return "sent", None
-    except Exception as e:  # noqa: BLE001
-        log.warning("email failed: %s", e)
-        return "failed", str(e)
+
+    attempts = _smtp_attempts()
+    retries = max(1, Config.SMTP_RETRIES)
+    errors: list[str] = []
+    for port, use_ssl in attempts:
+        for i in range(retries):
+            try:
+                _smtp_send(msg, port=port, use_ssl=use_ssl)
+                log.info(
+                    "email sent to=%s subject=%s via %s:%s ssl=%s attempt=%s",
+                    to, subject, Config.SMTP_HOST, port, use_ssl, i + 1,
+                )
+                return "sent", None
+            except Exception as e:  # noqa: BLE001
+                err = f"{Config.SMTP_HOST}:{port} ssl={use_ssl}: {e}"
+                errors.append(err)
+                log.warning("email attempt failed (%s/%s): %s", i + 1, retries, err)
+                # Brief backoff before retry / next port (helps transient GoDaddy stalls).
+                time.sleep(min(2 * (i + 1), 6))
+
+    detail = " | ".join(errors[-4:]) if errors else "unknown"
+    log.warning("email failed after retries: %s", detail)
+    return "failed", detail
 
 
 def send_welcome_email(user: dict) -> tuple[str, str | None]:

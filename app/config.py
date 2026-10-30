@@ -27,11 +27,15 @@ class Config:
     ALLOW_PRIVATE_TARGETS = _bool("ALLOW_PRIVATE_TARGETS", False)
 
     SMTP_HOST = os.getenv("SMTP_HOST", "")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
     SMTP_USER = os.getenv("SMTP_USER", "")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
     SMTP_FROM = os.getenv("SMTP_FROM", "Watchfront <alerts@watchfront.in>")
     SMTP_TLS = _bool("SMTP_TLS", True)
+    # Implicit SSL (SMTP_SSL). Default on for port 465 — preferred for GoDaddy from cloud hosts.
+    SMTP_SSL = _bool("SMTP_SSL", str(os.getenv("SMTP_PORT", "465")).strip() == "465")
+    SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "45"))
+    SMTP_RETRIES = int(os.getenv("SMTP_RETRIES", "3"))
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")

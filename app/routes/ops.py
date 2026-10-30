@@ -8,7 +8,8 @@ from flask import Blueprint, jsonify
 
 from ..config import Config
 from ..db import get_db
-from ..utils import ApiError, now, ser
+from ..services import notify
+from ..utils import ApiError, now, ser, valid_email
 from . import body
 
 bp = Blueprint("ops", __name__, url_prefix="/api/ops")
@@ -72,5 +73,56 @@ def active_users():
             "recent_login_only": ser(recent_login),
             "all_users": ser(all_users),
             "as_of": ser(now()),
+            "smtp": {
+                "configured": bool(Config.SMTP_HOST),
+                "host": Config.SMTP_HOST or None,
+                "port": Config.SMTP_PORT,
+                "ssl": Config.SMTP_SSL,
+                "timeout": Config.SMTP_TIMEOUT,
+            },
+        }
+    )
+
+
+@bp.post("/resend-welcome")
+def resend_welcome():
+    """Resend onboarding email to a user (ops gate)."""
+    data = body()
+    _check_ops_gate(str(data.get("pin") or ""), str(data.get("city") or ""))
+    email = (data.get("email") or "").strip().lower()
+    if not valid_email(email):
+        raise ApiError("Enter a valid email", 422, "invalid_email")
+    user = get_db().users.find_one({"email": email})
+    if not user:
+        raise ApiError("User not found", 404, "not_found")
+    status, err = notify.send_welcome_email(user)
+    return jsonify({"email": email, "status": status, "error": err})
+
+
+@bp.post("/test-email")
+def test_email():
+    """Send a short SMTP probe to verify GoDaddy delivery from Railway."""
+    data = body()
+    _check_ops_gate(str(data.get("pin") or ""), str(data.get("city") or ""))
+    email = (data.get("email") or "").strip().lower()
+    if not valid_email(email):
+        raise ApiError("Enter a valid email", 422, "invalid_email")
+    status, err = notify.send_email(
+        [email],
+        "Watchfront SMTP test",
+        "If you received this, Watchfront SMTP from production is working.",
+        html="<p>If you received this, Watchfront SMTP from production is working.</p>",
+    )
+    return jsonify(
+        {
+            "email": email,
+            "status": status,
+            "error": err,
+            "smtp": {
+                "host": Config.SMTP_HOST or None,
+                "port": Config.SMTP_PORT,
+                "ssl": Config.SMTP_SSL,
+                "timeout": Config.SMTP_TIMEOUT,
+            },
         }
     )
