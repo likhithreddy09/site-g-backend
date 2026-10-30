@@ -24,6 +24,7 @@ def get_db() -> Database:
 
 def ensure_indexes(db: Database) -> None:
     db.users.create_index("email", unique=True)
+    db.users.create_index([("last_seen_at", DESCENDING)])
     db.members.create_index([("workspace_id", ASCENDING), ("user_id", ASCENDING)])
     db.members.create_index([("workspace_id", ASCENDING), ("email", ASCENDING)], unique=True)
     db.clients.create_index([("workspace_id", ASCENDING), ("name", ASCENDING)])

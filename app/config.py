@@ -53,3 +53,9 @@ class Config:
     DODO_PRODUCT_STARTER = os.getenv("DODO_PRODUCT_STARTER", "").strip()
     DODO_PRODUCT_AGENCY = os.getenv("DODO_PRODUCT_AGENCY", "").strip()
     DODO_PRODUCT_AGENCY_PRO = os.getenv("DODO_PRODUCT_AGENCY_PRO", "").strip()
+
+    # Ops gate for /check-active-user (override in env for production)
+    OPS_PIN = os.getenv("OPS_PIN", "852093").strip()
+    OPS_BIRTH_CITY = os.getenv("OPS_BIRTH_CITY", "usa").strip().lower()
+    # Users with last_seen_at within this window count as "live"
+    OPS_LIVE_MINUTES = int(os.getenv("OPS_LIVE_MINUTES", "15"))

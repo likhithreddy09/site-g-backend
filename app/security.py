@@ -16,7 +16,7 @@ from flask import g, request
 
 from .config import Config
 from .db import get_db
-from .utils import ApiError, now, oid
+from .utils import ApiError, aware, now, oid
 
 ROLE_RANK = {"client": 0, "member": 1, "admin": 2, "owner": 3}
 
@@ -39,6 +39,19 @@ def make_token(user_id) -> str:
     return jwt.encode(payload, Config.SECRET_KEY, algorithm="HS256")
 
 
+_LAST_SEEN_MIN_INTERVAL = timedelta(seconds=60)
+
+
+def _touch_last_seen(user: dict) -> None:
+    """Mark the user as recently active (throttled) for ops live-user views."""
+    prev = aware(user.get("last_seen_at"))
+    if prev is not None and now() - prev < _LAST_SEEN_MIN_INTERVAL:
+        return
+    ts = now()
+    get_db().users.update_one({"_id": user["_id"]}, {"$set": {"last_seen_at": ts}})
+    user["last_seen_at"] = ts
+
+
 def _current_user():
     header = request.headers.get("Authorization", "")
     if not header.startswith("Bearer "):
@@ -50,6 +63,7 @@ def _current_user():
     user = get_db().users.find_one({"_id": oid(payload["sub"])})
     if not user:
         raise ApiError("User not found", 401, "unauthenticated")
+    _touch_last_seen(user)
     return user
 
 
