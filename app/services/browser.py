@@ -31,6 +31,23 @@ PAYMENT_PATTERNS = [
     ]
 ]
 
+# Third-party / tracker noise — not useful as journey evidence.
+_NOISE_HOST = re.compile(
+    r"(google-analytics\.com|googletagmanager\.com|googleadservices\.com|"
+    r"doubleclick\.net|googlesyndication\.com|google\.com/(ccm|rmkt|pagead|recaptcha)|"
+    r"facebook\.net|facebook\.com/(tr|en_US/fbevents)|connect\.facebook\.net|"
+    r"hotjar\.com|clarity\.ms|segment\.io|segment\.com|mixpanel\.com|"
+    r"sentry\.io|newrelic\.com|nr-data\.net|fullstory\.com|heap-api\.com|"
+    r"cdn\.amplitude\.com|api\.amplitude\.com)",
+    re.I,
+)
+_NOISE_CONSOLE = re.compile(
+    r"(ReactGA\.initialize|moment construction falls back|Download the React DevTools|"
+    r"\[HMR\]|\[webpack-dev-server\]|Deprecation warning: value provided is not in a recognized RFC2822)",
+    re.I,
+)
+_WORKER_ERROR = re.compile(r"Browser worker error|Executable doesn.?t exist|playwright", re.I)
+
 
 def _artifact_dir(ws_id) -> str:
     d = os.path.join(Config.STORAGE_DIR, "artifacts", str(ws_id))
@@ -106,13 +123,51 @@ def _launch(p):
     return p.chromium.launch(headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"])
 
 
+def _is_noise_url(url: str) -> bool:
+    return bool(_NOISE_HOST.search(url or ""))
+
+
+def _is_noise_console(text: str) -> bool:
+    return bool(_NOISE_CONSOLE.search(text or ""))
+
+
 def _attach_collectors(page, console: list, network: list):
-    page.on("console", lambda m: console.append({"type": m.type, "text": redact(m.text[:500])}) if m.type in ("error", "warning") else None)
-    page.on("pageerror", lambda e: console.append({"type": "exception", "text": redact(str(e)[:800])}))
-    page.on("requestfailed", lambda r: network.append({"url": strip_query(r.url), "method": r.method,
-                                                       "error": (r.failure or "failed") if isinstance(r.failure, str) else "failed"}))
-    page.on("response", lambda r: network.append({"url": strip_query(r.url), "method": r.request.method, "status": r.status})
-            if r.status >= 400 else None)
+    def on_console(m):
+        if m.type not in ("error", "warning"):
+            return
+        text = redact(m.text[:500])
+        if _is_noise_console(text):
+            return
+        console.append({"type": m.type, "text": text})
+
+    def on_pageerror(e):
+        text = redact(str(e)[:800])
+        if _is_noise_console(text):
+            return
+        console.append({"type": "exception", "text": text})
+
+    def on_requestfailed(r):
+        url = strip_query(r.url)
+        if _is_noise_url(url):
+            return
+        network.append({
+            "url": url,
+            "method": r.method,
+            "error": (r.failure or "failed") if isinstance(r.failure, str) else "failed",
+        })
+
+    def on_response(r):
+        if r.status < 400:
+            return
+        url = strip_query(r.url)
+        if _is_noise_url(url):
+            return
+        network.append({"url": url, "method": r.request.method, "status": r.status})
+
+    page.on("console", on_console)
+    page.on("pageerror", on_pageerror)
+    page.on("requestfailed", on_requestfailed)
+    page.on("response", on_response)
 
 
 # ------------------------------------------------------------------ page checks (content + visual + links)
@@ -488,10 +543,18 @@ def run_browser_test(test_id, trigger: str = "schedule") -> dict | None:
     run["_id"] = db.test_runs.insert_one(run).inserted_id
     key = f"test:{test['_id']}"
     site = db.websites.find_one({"_id": test.get("website_id")}) if test.get("website_id") else None
+    worker_fault = bool(_WORKER_ERROR.search(final.get("error") or ""))
     if final["ok"]:
         db.browser_tests.update_one({"_id": test["_id"]}, {"$set": {"last_run_at": t, "status": "passing", "consecutive_failures": 0,
                                                                      "last_run_id": run["_id"], "last_duration_ms": final["duration_ms"]}})
         incidents.auto_resolve(ws, key, f"Journey '{test['name']}' passed again.")
+    elif worker_fault:
+        # Infrastructure failure (missing browser binary, etc.) — not a site issue.
+        db.test_runs.update_one({"_id": run["_id"]}, {"$set": {"classification": "infra"}})
+        db.browser_tests.update_one({"_id": test["_id"]}, {"$set": {"last_run_at": t, "status": "error",
+                                                                     "last_run_id": run["_id"],
+                                                                     "last_duration_ms": final["duration_ms"],
+                                                                     "last_error": final["error"]}})
     else:
         fails = int(test.get("consecutive_failures", 0)) + 1
         confirmed = fails >= int(test.get("failure_threshold", 1))

@@ -511,16 +511,18 @@ def dispatch(
     extra_emails: list[str] | None = None,
     kind: str | None = None,
     site: str | None = None,
+    force: bool = False,
 ) -> None:
     s = settings_for(ws)
-    if not s["events"].get(event, True) and event != "escalation":
-        return
-    if event in ("incident_opened", "incident_reopened") and SEVERITY_RANK.get(severity, 2) < SEVERITY_RANK.get(s["min_severity"], 1):
-        return
-    # Quiet hours mute non-critical, non-escalation noise so agencies/startups can sleep.
-    if event != "escalation" and severity != "critical" and _in_quiet_hours(s):
-        _record(ws["_id"], "quiet_hours", "suppressed", subject, "skipped", "quiet hours", incident_id, event)
-        return
+    if not force:
+        if not s["events"].get(event, True) and event not in ("escalation", "assignment"):
+            return
+        if event in ("incident_opened", "incident_reopened") and SEVERITY_RANK.get(severity, 2) < SEVERITY_RANK.get(s["min_severity"], 1):
+            return
+        # Quiet hours mute non-critical, non-escalation noise so agencies/startups can sleep.
+        if event not in ("escalation", "assignment") and severity != "critical" and _in_quiet_hours(s):
+            _record(ws["_id"], "quiet_hours", "suppressed", subject, "skipped", "quiet hours", incident_id, event)
+            return
 
     kind = kind or ("visual_change" if event == "visual_change" else "escalation" if event == "escalation" else None)
     full_body = (

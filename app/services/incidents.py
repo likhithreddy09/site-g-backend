@@ -64,7 +64,7 @@ def open_or_update(ws: dict, *, key: str, source_type: str, source_id, title: st
         "source_type": source_type, "source_id": source_id, "key": key,
         "title": title, "summary": summary, "severity": severity, "status": "open",
         "started_at": t, "last_detected_at": t, "resolved_at": None, "acknowledged_at": None,
-        "escalated_at": None, "assignee_id": None, "occurrences": 1, "reopen_count": 0,
+        "escalated_at": None, "assignee_id": None, "assignee_email": None, "occurrences": 1, "reopen_count": 0,
         "false_positive": False, "resolution": "", "evidence": [evidence], "notes": [],
         "timeline": [_event("opened", f"Incident opened: {title}")], "ai": None,
     }
