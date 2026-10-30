@@ -17,7 +17,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError
 from ..config import Config
 from ..db import get_db
 from ..plans import add_usage, limits, quota_left
-from ..security import client_scope, redact, require, strip_query
+from ..security import client_scope, is_private_or_local_url, redact, require, strip_query
 from ..services import incidents
 from ..services import hll
 from ..services import stacktrace as st
@@ -38,6 +38,17 @@ SDK_JS = r"""/* Watchfront browser monitoring v2 */
   var API = opt('capture-api', 'true') !== 'false', CONSOLE = opt('console-errors', 'false') === 'true';
   if (!KEY || !w.JSON || Math.random() > SAMPLE) return;
   var T0 = Date.now(), loc = w.location, nav = w.navigator, fetch0 = w.fetch;
+  /* Never report from localhost / LAN — those are developer machines, not real visitors. */
+  var _h = String(loc.hostname || '').toLowerCase(), _local = !_h || _h === 'localhost' || _h === '127.0.0.1' || _h === '[::1]' || _h === '::1'
+    || _h.indexOf('.localhost') > -1 || _h.slice(-6) === '.local' || _h.slice(-9) === '.internal';
+  if (!_local) {
+    var _m = _h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if (_m) {
+      var _a = +_m[1], _b = +_m[2];
+      _local = _a === 10 || _a === 127 || (_a === 192 && _b === 168) || (_a === 172 && _b >= 16 && _b <= 31) || (_a === 169 && _b === 254);
+    }
+  }
+  if (_local) return;
   function rnd(){ return Math.random().toString(36).slice(2, 10) + T0.toString(36); }
   var SID; try { SID = sessionStorage.getItem('sg_sid') || rnd(); sessionStorage.setItem('sg_sid', SID); } catch(e){ SID = rnd(); }
   function url(u){ try { var x = new URL(u, loc.href); return x.origin + x.pathname; } catch(e){ return String(u).split(/[?#]/)[0]; } }
@@ -482,7 +493,10 @@ def ingest():
 
     # Lightweight hello from sdk.js on first page load in a session.
     if data.get("hello"):
-        _mark_script_seen()
+        # Don't treat local/LAN page loads as "script installed" for production sites.
+        page_hint = str(data.get("page") or request.headers.get("Origin") or request.headers.get("Referer") or "")
+        if not is_private_or_local_url(page_hint):
+            _mark_script_seen()
         return _cors(Response(status=202))
 
     raw = data.get("events") if isinstance(data.get("events"), list) else [data]
@@ -506,16 +520,22 @@ def ingest():
         message = redact(str(e.get("message") or "Unknown error"))[:1000]
         if any(p in message.lower() for p in ignore):
             continue
+        page = str(e.get("page") or e.get("page_url") or "")
+        if is_private_or_local_url(page) or is_private_or_local_url(message):
+            continue
         api = None
         if kind == "api" and isinstance(e.get("api"), dict):
             a = e["api"]
-            api = {"url": strip_query(str(a.get("url") or ""))[:500], "method": str(a.get("method") or "GET")[:10],
+            api_url = strip_query(str(a.get("url") or ""))[:500]
+            if is_private_or_local_url(api_url):
+                continue
+            api = {"url": api_url, "method": str(a.get("method") or "GET")[:10],
                    "status": clamp_int(a.get("status"), 0, 999, 0), "duration": clamp_int(a.get("duration"), 0, 600000, 0),
                    "error": redact(str(a.get("error") or ""))[:200]}
         crumbs = [{"c": str(c.get("c") or "")[:10], "m": redact(str(c.get("m") or ""))[:160], "t": clamp_int(c.get("t"), 0, 86_400_000, 0)}
                   for c in (e.get("crumbs") or [])[-20:] if isinstance(c, dict)]
         ev = prepare(site, kind=kind, message=message, stack=redact(str(e.get("stack") or ""))[:6000], source=str(e.get("source") or ""),
-                     line=e.get("line"), col=e.get("col"), api=api, page=str(e.get("page") or e.get("page_url") or ""), browser=browser,
+                     line=e.get("line"), col=e.get("col"), api=api, page=page, browser=browser,
                      os_=os_, device=device, release=str(data.get("release") or e.get("release") or rum.get("release") or ""),
                      env=str(data.get("env") or ""), viewport=str(data.get("viewport") or e.get("viewport") or ""), session=session,
                      crumbs=crumbs, n=clamp_int(e.get("n"), 1, 100, 1))

@@ -10,3 +10,4 @@ beautifulsoup4>=4.12
 pillow>=10.2
 playwright>=1.44
 python-dotenv>=1.0
+dodopayments[webhooks]>=1.0

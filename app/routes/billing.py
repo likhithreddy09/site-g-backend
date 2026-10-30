@@ -1,9 +1,9 @@
-"""Cashfree hosted checkout + webhook for plan upgrades.
+"""Dodo Payments hosted checkout + webhook for plan upgrades.
 
-Flow (Cashfree web checkout docs):
-1. Server creates order → payment_session_id
-2. Client opens Cashfree.js checkout
-3. Server confirms via webhook + GET /orders + GET /orders/{id}/payments
+Flow:
+1. Server creates checkout session → checkout_url
+2. Client redirects to Dodo hosted checkout
+3. Server confirms via webhook (payment.succeeded) + optional order poll
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from ..config import Config
 from ..db import get_db
 from ..plans import BILLING_PERIOD_DAYS, PLANS, extend_paid_until
 from ..security import require
-from ..services import cashfree
+from ..services import dodo
 from ..utils import ApiError, now, ser, token
 from . import body
 
@@ -48,7 +48,7 @@ def _apply_plan(ws_id, plan: str, *, payment: dict | None = None) -> dict:
         prev = (ws.get("billing") or {})
         upd["billing"] = {
             **prev,
-            "provider": "cashfree",
+            "provider": "dodo",
             "last_order_id": payment.get("order_id"),
             "last_payment_id": payment.get("payment_id"),
             "last_paid_at": now(),
@@ -69,55 +69,35 @@ def _apply_plan(ws_id, plan: str, *, payment: dict | None = None) -> dict:
 @bp.get("/config")
 @require(allow_when_locked=True)
 def billing_config():
-    methods = cashfree.payment_methods() if cashfree.enabled() else ""
     return jsonify({
-        "enabled": cashfree.enabled(),
-        "mode": cashfree.mode() if cashfree.enabled() else None,
+        "enabled": dodo.enabled(),
+        "mode": dodo.mode() if dodo.enabled() else None,
         "currency": "INR",
-        "provider": "cashfree",
-        "payment_methods": methods,
-        "payment_methods_labels": _method_labels(methods),
-        "requires_phone": True,
+        "provider": "dodo",
+        "payment_methods": "upi,cc,dc,nb",
+        "payment_methods_labels": [
+            {"id": "upi", "label": "UPI"},
+            {"id": "cc", "label": "Credit card"},
+            {"id": "dc", "label": "Debit card"},
+            {"id": "nb", "label": "Netbanking"},
+        ],
+        "requires_phone": False,
     })
-
-
-def _method_labels(csv: str) -> list[dict]:
-    labels = {
-        "cc": "Credit card",
-        "dc": "Debit card",
-        "upi": "UPI",
-        "nb": "Netbanking",
-        "app": "Wallets (Paytm, PhonePe, Amazon Pay…)",
-        "paylater": "Pay later",
-        "ccc": "Corporate credit card",
-        "ppc": "Prepaid card",
-        "emi": "EMI",
-        "cardlessemi": "Cardless EMI",
-        "ccemi": "Credit card EMI",
-        "dcemi": "Debit card EMI",
-        "banktransfer": "Bank transfer",
-        "applepay": "Apple Pay",
-        "paypal": "PayPal",
-    }
-    out = []
-    for m in [p.strip() for p in (csv or "").split(",") if p.strip()]:
-        out.append({"id": m, "label": labels.get(m, m.upper())})
-    return out
 
 
 @bp.post("/checkout")
 @require("owner", allow_when_locked=True)
 def checkout():
-    if not cashfree.enabled():
+    if not dodo.enabled():
         raise ApiError(
-            "Payments are not configured on this server. Set Cashfree keys on Railway.",
+            "Payments are not configured on this server. Set DODO_PAYMENTS_API_KEY on Railway.",
             503,
             "billing_unavailable",
         )
     data = body()
     plan = data.get("plan")
     if plan not in PAID_PLANS:
-        raise ApiError("Choose a paid plan to checkout (Starter, Agency, or Agency Pro).", 422, "invalid_plan")
+        raise ApiError("Choose a paid plan to checkout (Starter, Growth, or Agency).", 422, "invalid_plan")
     amount = PLANS[plan]["price_inr"]
     if not amount:
         raise ApiError("This plan has no price configured.", 422, "invalid_plan_amount")
@@ -133,72 +113,57 @@ def checkout():
     user_id = g.user["_id"]
     user = db.users.find_one({"_id": user_id}) or g.user or {}
     phone_raw = data.get("phone") or user.get("phone") or ""
-    phone = cashfree.normalize_phone(phone_raw)
-    if len(phone) != 10 or phone[0] not in "6789":
+    phone = dodo.normalize_phone(phone_raw)
+    if phone and (len(phone) != 10 or phone[0] not in "6789"):
         raise ApiError(
-            "Enter a valid 10-digit Indian mobile number before paying (Cashfree requirement).",
+            "Enter a valid 10-digit Indian mobile number (or leave blank — Dodo checkout can collect it).",
             422,
             "invalid_phone",
         )
-
-    # Persist phone for next checkout
-    if phone != cashfree.normalize_phone(user.get("phone")):
+    if phone and phone != dodo.normalize_phone(user.get("phone")):
         db.users.update_one({"_id": user_id}, {"$set": {"phone": phone}})
 
     order_id = f"wf_{str(g.ws_id)[-8:]}_{plan}_{token('', 8)}"
-    # {order_id} placeholder is replaced by Cashfree on redirect (recommended).
-    return_url = f"{Config.APP_URL}/app/billing?order_id={{order_id}}"
-    notify_url = f"{Config.PUBLIC_API_URL}/api/billing/webhook"
-    plan_name = PLANS[plan]["name"]
+    return_url = f"{Config.APP_URL}/app/billing?order_id={order_id}"
 
-    cf_order = cashfree.create_order(
+    session = dodo.create_checkout(
+        plan=plan,
         order_id=order_id,
         amount_inr=amount,
-        customer_id=str(user_id),
         customer_email=user.get("email") or "likhith.reddy@watchfront.in",
-        customer_phone=phone,
         customer_name=user.get("name") or user.get("email") or "Customer",
+        customer_phone=phone or None,
         return_url=return_url,
-        notify_url=notify_url,
-        order_note=f"Watchfront {plan_name} plan monthly",
-        # Cashfree: checkout_context max 100 chars, no HTML/URLs/line breaks/emojis/special symbols.
-        tags={
-            "plan": plan,
-            "checkout_context": f"Watchfront {plan_name} plan INR {int(amount)} per month"[:100],
-        },
     )
-
-    session_id = cf_order.get("payment_session_id")
-    if not session_id:
-        raise ApiError("Cashfree did not return a payment_session_id", 502, "cashfree_error")
 
     doc = {
         "order_id": order_id,
-        "cf_order_id": cf_order.get("cf_order_id") or cf_order.get("order_id"),
+        "session_id": session["session_id"],
+        "checkout_url": session["checkout_url"],
+        "product_id": session.get("product_id"),
         "workspace_id": g.ws_id,
         "user_id": user_id,
         "plan": plan,
         "amount_inr": amount,
         "currency": "INR",
         "status": "created",
-        "payment_session_id": session_id,
-        "customer_phone": phone,
-        "payment_methods": cashfree.payment_methods(),
-        "raw_create": {k: cf_order.get(k) for k in ("cf_order_id", "order_id", "order_status", "payment_session_id") if k in cf_order},
+        "provider": "dodo",
+        "customer_phone": phone or None,
         "created_at": now(),
         "updated_at": now(),
     }
     db.billing_orders.insert_one(doc)
-    audit("billing.checkout_started", "workspace", g.ws_id, {"plan": plan, "order_id": order_id, "amount_inr": amount})
+    audit("billing.checkout_started", "workspace", g.ws_id, {"plan": plan, "order_id": order_id, "amount_inr": amount, "provider": "dodo"})
 
     return jsonify({
         "order_id": order_id,
-        "payment_session_id": session_id,
+        "session_id": session["session_id"],
+        "checkout_url": session["checkout_url"],
         "amount_inr": amount,
         "plan": plan,
-        "mode": cashfree.mode(),
-        "return_url": return_url.replace("{order_id}", order_id),
-        "payment_methods": cashfree.payment_methods(),
+        "mode": dodo.mode(),
+        "return_url": return_url,
+        "provider": "dodo",
     })
 
 
@@ -209,41 +174,14 @@ def order_status(order_id: str):
     local = db.billing_orders.find_one({"order_id": order_id, "workspace_id": g.ws_id})
     if not local:
         raise ApiError("Order not found", 404)
-
-    remote: dict = {}
-    payments: list = []
-    try:
-        remote = cashfree.get_order(order_id)
-        payments = cashfree.get_payments(order_id)
-    except ApiError:
-        pass
-
-    paid = cashfree.order_is_paid(remote, payments) or local.get("status") == "paid"
-    if paid and local.get("status") != "paid":
-        payment_id = None
-        for p in payments:
-            if (p.get("payment_status") or "").upper() == "SUCCESS":
-                payment_id = p.get("cf_payment_id") or p.get("payment_id")
-                break
-        _mark_paid(local, {
-            "payment_id": payment_id,
-            "order_status": remote.get("order_status"),
-            "payments": payments,
-        })
-        local = db.billing_orders.find_one({"order_id": order_id})
-
     return jsonify(ser({
         "order_id": order_id,
         "plan": local.get("plan"),
         "amount_inr": local.get("amount_inr"),
         "status": local.get("status"),
-        "cf_status": remote.get("order_status"),
         "paid": local.get("status") == "paid",
         "workspace_plan": (db.workspaces.find_one({"_id": g.ws_id}) or {}).get("plan"),
-        "payment_methods_used": [
-            p.get("payment_group") or p.get("payment_method")
-            for p in payments if (p.get("payment_status") or "").upper() == "SUCCESS"
-        ],
+        "provider": local.get("provider") or "dodo",
     }))
 
 
@@ -254,15 +192,7 @@ def _mark_paid(local: dict, remote: dict | None = None) -> None:
         return
     payment_id = None
     if remote:
-        payment_id = remote.get("payment_id") or remote.get("cf_payment_id")
-        payments = remote.get("payments")
-        if not payment_id and isinstance(payments, list) and payments:
-            for p in payments:
-                if (p.get("payment_status") or "").upper() == "SUCCESS":
-                    payment_id = p.get("cf_payment_id") or p.get("payment_id")
-                    break
-            if not payment_id:
-                payment_id = payments[0].get("cf_payment_id")
+        payment_id = remote.get("payment_id") or remote.get("id")
     db.billing_orders.update_one(
         {"_id": local["_id"], "status": {"$ne": "paid"}},
         {"$set": {"status": "paid", "paid_at": now(), "updated_at": now(), "payment_id": payment_id, "raw_paid": remote or {}}},
@@ -271,56 +201,50 @@ def _mark_paid(local: dict, remote: dict | None = None) -> None:
         "order_id": order_id, "payment_id": payment_id, "amount_inr": local.get("amount_inr"),
     })
     audit("billing.paid", "workspace", local["workspace_id"], {
-        "plan": local["plan"], "order_id": order_id, "from": None, "to": ws.get("plan"),
+        "plan": local["plan"], "order_id": order_id, "from": None, "to": ws.get("plan"), "provider": "dodo",
     })
-    log.info("plan upgraded via cashfree order=%s plan=%s ws=%s", order_id, local["plan"], local["workspace_id"])
+    log.info("plan upgraded via dodo order=%s plan=%s ws=%s", order_id, local["plan"], local["workspace_id"])
 
 
 @bp.post("/webhook")
 def webhook():
-    """Cashfree notify_url + dashboard webhook — verify HMAC signature."""
-    raw = request.get_data(as_text=True) or ""
-    signature = request.headers.get("x-webhook-signature") or ""
-    timestamp = request.headers.get("x-webhook-timestamp") or ""
-    if cashfree.enabled() and not cashfree.verify_webhook_signature(signature, raw, timestamp):
-        if Config.CASHFREE_ENV == "production":
-            log.warning("cashfree webhook signature mismatch")
-            return jsonify({"ok": False, "error": "invalid signature"}), 401
+    """Dodo Payments webhook — payment.succeeded unlocks the plan."""
+    raw = request.get_data() or b""
+    try:
+        event = dodo.unwrap_webhook(raw, dict(request.headers))
+    except ApiError as e:
+        return jsonify({"ok": False, "error": e.message}), e.status
 
-    payload = request.get_json(silent=True) or {}
-    data = payload.get("data") or payload
-    order = data.get("order") or {}
-    payment = data.get("payment") or {}
-    order_id = order.get("order_id") or data.get("order_id") or payload.get("orderId")
-    event_type = (payload.get("type") or payload.get("event") or "").upper()
+    event_type = (event.get("type") or "").lower()
+    meta = dodo.payment_metadata(event)
+    order_id = meta.get("order_id")
 
     if not order_id:
+        # Fallback: some payloads nest metadata differently
+        data = event.get("data") or {}
+        if hasattr(data, "model_dump"):
+            data = data.model_dump()
+        md = data.get("metadata") if isinstance(data, dict) else None
+        if isinstance(md, dict):
+            order_id = md.get("order_id")
+
+    if not order_id:
+        log.info("dodo webhook without order_id type=%s", event_type)
         return jsonify({"ok": True, "ignored": True})
 
     db = get_db()
     local = db.billing_orders.find_one({"order_id": order_id})
     if not local:
-        log.info("cashfree webhook unknown order %s type=%s", order_id, event_type)
+        log.info("dodo webhook unknown order %s type=%s", order_id, event_type)
         return jsonify({"ok": True, "unknown_order": True})
 
-    success_events = ("PAYMENT_SUCCESS", "PAYMENT_CHARGES_WEBHOOK", "ORDER_PAID")
-    paid_hint = (
-        event_type in success_events
-        or (payment.get("payment_status") or "").upper() == "SUCCESS"
-        or (order.get("order_status") or "").upper() in ("PAID", "ACTIVE")
-    )
-
-    if paid_hint:
-        _mark_paid(local, {
-            "payment_id": payment.get("cf_payment_id"),
-            "order_status": order.get("order_status"),
-            "event": event_type,
-            "payment_group": payment.get("payment_group") or payment.get("payment_method"),
-        })
+    if event_type in ("payment.succeeded", "payment.succeeded".lower()) or event_type.endswith("payment.succeeded"):
+        _mark_paid(local, meta.get("raw") or {"payment_id": meta.get("payment_id")})
+    elif "succeeded" in event_type and "payment" in event_type:
+        _mark_paid(local, meta.get("raw") or {"payment_id": meta.get("payment_id")})
     else:
         db.billing_orders.update_one({"_id": local["_id"]}, {"$set": {
             "updated_at": now(), "last_webhook_type": event_type,
-            "last_webhook_payment_status": payment.get("payment_status"),
         }})
 
     return jsonify({"ok": True})

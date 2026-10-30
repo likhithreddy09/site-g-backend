@@ -3,10 +3,10 @@ from datetime import timedelta
 from .db import get_db
 from .utils import ApiError, aware, now
 
-# India-first pricing (INR / month via Cashfree).
+# India-first pricing (INR / month via Dodo Payments).
 # Starter 1–3 sites ₹999 · Growth 4–10 sites ₹2,499 · Agency 10+ ₹4,999 · Enterprise custom
 # New workspaces get a 24h trial on the Growth plan; after that the dashboard locks until they pay.
-# Each successful Cashfree payment unlocks the chosen plan for BILLING_PERIOD_DAYS; then locks again until renewed.
+# Each successful Dodo payment unlocks the chosen plan for BILLING_PERIOD_DAYS; then locks again until renewed.
 TRIAL_HOURS = 24
 TRIAL_PLAN = "agency"  # Growth — full product experience during trial
 BILLING_PERIOD_DAYS = 30

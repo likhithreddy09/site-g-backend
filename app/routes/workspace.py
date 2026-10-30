@@ -226,19 +226,19 @@ def plans():
 @bp.post("/plan")
 @require("owner", allow_when_locked=True)
 def change_plan():
-    """Downgrade to Free when Cashfree is enabled; paid upgrades go through /api/billing/checkout."""
-    from ..services import cashfree
+    """Downgrade to Free when Dodo is enabled; paid upgrades go through /api/billing/checkout."""
+    from ..services import dodo
     plan = body().get("plan")
     if plan not in PLANS or plan == "enterprise":
         raise ApiError("Choose a valid self-serve plan (Enterprise requires contacting sales)", 422)
-    if cashfree.enabled() and plan != "free" and (PLANS[plan].get("price_inr") or 0) > 0:
-        raise ApiError("Paid plans require Cashfree checkout. Use Pay & upgrade.", 402, "payment_required")
+    if dodo.enabled() and plan != "free" and (PLANS[plan].get("price_inr") or 0) > 0:
+        raise ApiError("Paid plans require Dodo Payments checkout. Use Pay & upgrade.", 402, "payment_required")
     db = get_db()
     new_limits = PLANS[plan]
     sites = db.websites.count_documents({"workspace_id": g.ws_id})
     if sites > new_limits["websites"]:
         raise ApiError(f"You have {sites} websites; the {new_limits['name']} plan allows {new_limits['websites']}. Remove some first.", 409)
-    # Free downgrade clears paid window; paid self-serve without Cashfree still gets 30 days.
+    # Free downgrade clears paid window; paid self-serve without Dodo still gets 30 days.
     from ..plans import extend_paid_until
     upd = {"plan": plan, "trial": False, "trial_ends_at": None, "plan_changed_at": now()}
     if plan == "free":

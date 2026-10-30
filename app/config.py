@@ -44,11 +44,12 @@ class Config:
 
     STORAGE_DIR = os.getenv("STORAGE_DIR", os.path.join(BASE_DIR, "storage"))
 
-    # Cashfree PG (never commit real keys — set via env / Railway)
-    # Docs: https://www.cashfree.com/docs/payments/online/web/redirect
-    CASHFREE_APP_ID = os.getenv("CASHFREE_APP_ID", "").strip()
-    CASHFREE_SECRET_KEY = os.getenv("CASHFREE_SECRET_KEY", "").strip()
-    CASHFREE_ENV = os.getenv("CASHFREE_ENV", "production").strip().lower()  # sandbox | production
-    CASHFREE_API_VERSION = os.getenv("CASHFREE_API_VERSION", "2023-08-01").strip()
-    # Comma-separated: cc,dc,upi,nb,app,paylater,ccc,ppc,emi,... — blank = all account methods
-    CASHFREE_PAYMENT_METHODS = os.getenv("CASHFREE_PAYMENT_METHODS", "cc,dc,upi,nb,app,paylater").strip()
+    # Dodo Payments (never commit real keys — set via env / Railway)
+    # Docs: https://docs.dodopayments.com/developer-resources/checkout-session
+    DODO_PAYMENTS_API_KEY = os.getenv("DODO_PAYMENTS_API_KEY", "").strip()
+    DODO_PAYMENTS_WEBHOOK_KEY = os.getenv("DODO_PAYMENTS_WEBHOOK_KEY", "").strip()
+    # test_mode | live_mode
+    DODO_PAYMENTS_ENV = os.getenv("DODO_PAYMENTS_ENV", "test_mode").strip().lower()
+    DODO_PRODUCT_STARTER = os.getenv("DODO_PRODUCT_STARTER", "").strip()
+    DODO_PRODUCT_AGENCY = os.getenv("DODO_PRODUCT_AGENCY", "").strip()
+    DODO_PRODUCT_AGENCY_PRO = os.getenv("DODO_PRODUCT_AGENCY_PRO", "").strip()

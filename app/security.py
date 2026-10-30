@@ -172,6 +172,36 @@ def is_public_ip(ip: str) -> bool:
     return addr.is_global and not addr.is_multicast
 
 
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>]+", re.I)
+
+
+def is_private_or_local_url(url: str) -> bool:
+    """True for localhost / LAN / link-local URLs — never surface these as visitor errors.
+
+    Also accepts a free-form message that embeds such a URL (e.g. Failed to load resource: …).
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    candidates = [raw]
+    candidates.extend(_URL_IN_TEXT.findall(raw))
+    for cand in candidates:
+        try:
+            host = (urlparse(cand).hostname or "").lower().strip("[]")
+        except ValueError:
+            continue
+        if not host:
+            continue
+        if host in _BLOCKED_HOSTS or host.endswith((".localhost", ".internal", ".local")):
+            return True
+        try:
+            if not is_public_ip(host):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def check_host_allowed(host: str) -> tuple[bool, str | None]:
     if not host:
         return False, "Missing host"
